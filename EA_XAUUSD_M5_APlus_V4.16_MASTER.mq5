@@ -251,5 +251,42 @@ double AmbilSwingTerakhir(ENUM_TIMEFRAMES tf, bool cariHigh)
          return iLow(InpSymbol, tf, shift);
    }
 
+ //--------------------------------------------------
+// MODUL 2: DETEKSI LIQUIDITY SWEEP
+// Hanya mendeteksi sweep pada candle yang sudah tertutup.
+// Tidak membuka transaksi.
+
+bool DeteksiSweepHigh(ENUM_TIMEFRAMES tf)
+{
+   double swingHigh = AmbilSwingTerakhir(tf, true);
+   if(swingHigh <= 0.0)
+      return false;
+
+   double highCandle = iHigh(InpSymbol, tf, 1);
+   double closeCandle = iClose(InpSymbol, tf, 1);
+
+   if(highCandle <= 0.0 || closeCandle <= 0.0)
+      return false;
+
+   // Harga menembus swing high, lalu ditutup kembali di bawahnya.
+   return highCandle > swingHigh && closeCandle < swingHigh;
+}
+
+bool DeteksiSweepLow(ENUM_TIMEFRAMES tf)
+{
+   double swingLow = AmbilSwingTerakhir(tf, false);
+   if(swingLow <= 0.0)
+      return false;
+
+   double lowCandle = iLow(InpSymbol, tf, 1);
+   double closeCandle = iClose(InpSymbol, tf, 1);
+
+   if(lowCandle <= 0.0 || closeCandle <= 0.0)
+      return false;
+
+   // Harga menembus swing low, lalu ditutup kembali di atasnya.
+   return lowCandle < swingLow && closeCandle > swingLow;
+}
+
    return 0.0;
 }
