@@ -22,7 +22,8 @@ input int MaxRetest = 3;
 
 input int SpreadMaxPoints = 250;
 input ulong MagicNumber = 416001;
-
+input int ATRPeriod = 14;
+input ENUM_TIMEFRAMES ATRTimeframe = PERIOD_M5;
 datetime lastBarTime = 0;
 
 //-----------------------------------------------
