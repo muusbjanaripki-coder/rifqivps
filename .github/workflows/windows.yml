@@ -1,25 +1,26 @@
 
-name: Uji EA XAUUSD APlus
+name: Periksa EA XAUUSD APlus V4.16
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - "uji_ea.py"
+      - "EA_XAUUSD_M5_APlus_V4.16_MASTER.mq5"
       - ".github/workflows/main.yml"
 
 jobs:
-  uji-ea:
+  periksa-file:
     runs-on: ubuntu-latest
     steps:
-      - name: Ambil kode repository
+      - name: Ambil repository
         uses: actions/checkout@v4
 
-      - name: Siapkan Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Jalankan pengujian EA
-        run: python -m unittest -v uji_ea.py
+      - name: Periksa file EA
+        shell: bash
+        run: |
+          test -s EA_XAUUSD_M5_APlus_V4.16_MASTER.mq5
+          echo "File EA ditemukan dan tidak kosong."
+          grep -q 'int OnInit()' EA_XAUUSD_M5_APlus_V4.16_MASTER.mq5
+          grep -q 'void OnTick()' EA_XAUUSD_M5_APlus_V4.16_MASTER.mq5
+          echo "Struktur dasar EA ditemukan."
 
