@@ -6,7 +6,8 @@ on:
   push:
     paths:
       - "EA_XAUUSD_M5_APlus_V4.16_MASTER.mq5"
-      - ".github/workflows/main.yml"
+      - "uji_ea.py"
+      - ".github/workflows/windows.yml"
 
 jobs:
   periksa-file:
@@ -24,3 +25,10 @@ jobs:
           grep -q 'void OnTick()' EA_XAUUSD_M5_APlus_V4.16_MASTER.mq5
           echo "Struktur dasar EA ditemukan."
 
+      - name: Siapkan Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Jalankan tes Python
+        run: python uji_ea.py
