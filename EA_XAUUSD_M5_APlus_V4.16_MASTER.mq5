@@ -290,3 +290,54 @@ bool DeteksiSweepLow(ENUM_TIMEFRAMES tf)
 
    return 0.0;
 }
+
+ //--------------------------------------------------
+// MODUL 3: DISPLACEMENT BERBASIS ATR
+// Memeriksa candle tertutup; tidak membuka transaksi.
+
+input double DisplacementATRMultiplier = 1.5;
+input double MinBodyToRangeRatio = 0.65;
+
+bool DeteksiDisplacement(ENUM_TIMEFRAMES tf, bool bullish)
+{
+   if(DisplacementATRMultiplier <= 0.0 ||
+      MinBodyToRangeRatio <= 0.0 ||
+      MinBodyToRangeRatio > 1.0)
+      return false;
+
+   int handle = iATR(InpSymbol, tf, ATRPeriod);
+   if(handle == INVALID_HANDLE)
+      return false;
+
+   double atr[1];
+   bool dataSiap =
+      BarsCalculated(handle) >= ATRPeriod + 2 &&
+      CopyBuffer(handle, 0, 1, 1, atr) == 1;
+
+   IndicatorRelease(handle);
+
+   if(!dataSiap || atr[0] <= 0.0)
+      return false;
+
+   double open1  = iOpen(InpSymbol, tf, 1);
+   double close1 = iClose(InpSymbol, tf, 1);
+   double high1  = iHigh(InpSymbol, tf, 1);
+   double low1   = iLow(InpSymbol, tf, 1);
+
+   double range = high1 - low1;
+   double body = MathAbs(close1 - open1);
+
+   if(range <= 0.0)
+      return false;
+
+   if(body < atr[0] * DisplacementATRMultiplier)
+      return false;
+
+   if(body / range < MinBodyToRangeRatio)
+      return false;
+
+   if(bullish)
+      return close1 > open1;
+
+   return close1 < open1;
+}
