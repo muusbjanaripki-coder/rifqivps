@@ -175,3 +175,81 @@ void OnTick()
    // TODO: Risk Guardian dan Profit Lock.
    // TODO: News Intelligence.
 }
+
+ //--------------------------------------------------
+// MODUL 1: DETEKSI SWING HIGH DAN SWING LOW
+// Hanya membaca struktur candle; tidak membuka transaksi.
+
+input int SwingLookback = 3;
+input int SwingScanBars = 100;
+
+bool DeteksiSwingHigh(ENUM_TIMEFRAMES tf, int shift)
+{
+   if(SwingLookback < 1 || shift <= SwingLookback)
+      return false;
+
+   if(shift + SwingLookback >= Bars(InpSymbol, tf))
+      return false;
+
+   double nilai = iHigh(InpSymbol, tf, shift);
+   if(nilai <= 0)
+      return false;
+
+   for(int i = 1; i <= SwingLookback; i++)
+   {
+      if(iHigh(InpSymbol, tf, shift-i) >= nilai)
+         return false;
+
+      if(iHigh(InpSymbol, tf, shift+i) > nilai)
+         return false;
+   }
+
+   return true;
+}
+
+bool DeteksiSwingLow(ENUM_TIMEFRAMES tf, int shift)
+{
+   if(SwingLookback < 1 || shift <= SwingLookback)
+      return false;
+
+   if(shift + SwingLookback >= Bars(InpSymbol, tf))
+      return false;
+
+   double nilai = iLow(InpSymbol, tf, shift);
+   if(nilai <= 0)
+      return false;
+
+   for(int i = 1; i <= SwingLookback; i++)
+   {
+      if(iLow(InpSymbol, tf, shift-i) <= nilai)
+         return false;
+
+      if(iLow(InpSymbol, tf, shift+i) < nilai)
+         return false;
+   }
+
+   return true;
+}
+
+// Mengambil swing terakhir yang sudah terkonfirmasi.
+double AmbilSwingTerakhir(ENUM_TIMEFRAMES tf, bool cariHigh)
+{
+   if(SwingScanBars <= SwingLookback * 2)
+      return 0.0;
+
+   int batas = MathMin(
+      SwingScanBars,
+      Bars(InpSymbol, tf) - SwingLookback - 1
+   );
+
+   for(int shift = SwingLookback + 1; shift < batas; shift++)
+   {
+      if(cariHigh && DeteksiSwingHigh(tf, shift))
+         return iHigh(InpSymbol, tf, shift);
+
+      if(!cariHigh && DeteksiSwingLow(tf, shift))
+         return iLow(InpSymbol, tf, shift);
+   }
+
+   return 0.0;
+}
