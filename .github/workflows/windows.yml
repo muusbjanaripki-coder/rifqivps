@@ -1,14 +1,25 @@
-name: Tes Windows
+
+name: Uji EA XAUUSD APlus
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "uji_ea.py"
+      - ".github/workflows/main.yml"
 
 jobs:
-  test:
-    runs-on: windows-latest
+  uji-ea:
+    runs-on: ubuntu-latest
     steps:
-      - name: Cek Windows
-        shell: pwsh
-        run: |
-          Write-Host "Runner Windows aktif"
-          Get-ComputerInfo | Select-Object WindowsProductName
+      - name: Ambil kode repository
+        uses: actions/checkout@v4
+
+      - name: Siapkan Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Jalankan pengujian EA
+        run: python -m unittest -v uji_ea.py
+
