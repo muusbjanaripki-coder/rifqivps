@@ -6,8 +6,8 @@
 
 CTrade trade;
 
-// EA XAUUSD M5 APlus V4.16 MASTER
-// Fondasi keselamatan - belum membuka transaksi.
+// APlus V4.16 MASTER
+// Fondasi validasi saja. Tidak membuka transaksi.
 
 input string InpSymbol = "XAUUSD";
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
@@ -21,18 +21,19 @@ input int MaxBiasa = 5;
 input int MaxRetest = 3;
 
 input int SpreadMaxPoints = 250;
-input ulong MagicNumber = 416001;
 input int ATRPeriod = 14;
-input ENUM_TIMEFRAMES ATRTimeframe = PERIOD_M5;
-datetime lastBarTime = 0;
+input ulong MagicNumber = 416001;
 
-//-----------------------------------------------
+datetime lastBarTime = 0;
+int atrHandle = INVALID_HANDLE;
+
+//--------------------------------------------------
 int OnInit()
 {
    if(RiskNormalPct <= 0 || RiskNormalPct > 100 ||
       RiskSuperPct <= 0 || RiskSuperPct > 100 ||
       DailyLossLimitPct <= 0 || DailyLossLimitPct > 100 ||
-      SpreadMaxPoints <= 0 ||
+      SpreadMaxPoints <= 0 || ATRPeriod < 2 ||
       MaxSuper < 1 || MaxBiasa < 1 || MaxRetest < 1)
    {
       Print("ERROR: Parameter EA tidak valid.");
@@ -45,86 +46,112 @@ int OnInit()
       return INIT_FAILED;
    }
 
+   atrHandle = iATR(InpSymbol, InpEntryTF, ATRPeriod);
+
+   if(atrHandle == INVALID_HANDLE)
+   {
+      Print("ERROR: Gagal membuat indikator ATR.");
+      return INIT_FAILED;
+   }
+
    trade.SetExpertMagicNumber(MagicNumber);
 
-   Print("APlus V4.16 MASTER: fondasi berhasil dimuat.");
-   Print("Mode aman: belum ada transaksi otomatis.");
+   Print("APlus V4.16: validasi dasar aktif.");
+   Print("Mode aman: transaksi otomatis tidak aktif.");
 
    return INIT_SUCCEEDED;
 }
 
-//-----------------------------------------------
+//--------------------------------------------------
+void OnDeinit(const int reason)
+{
+   if(atrHandle != INVALID_HANDLE)
+   {
+      IndicatorRelease(atrHandle);
+      atrHandle = INVALID_HANDLE;
+   }
+}
+
+//--------------------------------------------------
 bool ValidasiHargaDanSpread()
 {
-   if(!SymbolSelect(InpSymbol, true))
-      return false;
-
    MqlTick tick;
 
    if(!SymbolInfoTick(InpSymbol, tick))
-   {
-      Print("Data tick belum tersedia.");
       return false;
-   }
 
    if(tick.bid <= 0 || tick.ask <= 0 || tick.ask < tick.bid)
-   {
-      Print("Data harga tidak valid.");
       return false;
-   }
 
    double point = SymbolInfoDouble(InpSymbol, SYMBOL_POINT);
 
    if(point <= 0)
-   {
-      Print("Nilai point simbol tidak valid.");
       return false;
-   }
 
    double spreadPoints = (tick.ask - tick.bid) / point;
 
    if(spreadPoints > SpreadMaxPoints)
    {
-      Print("Spread terlalu tinggi: ",
-            DoubleToString(spreadPoints, 1),
-            " points. Analisis entry dilewati.");
+      Print("Spread melebihi batas: ",
+            DoubleToString(spreadPoints, 1), " points");
       return false;
    }
 
    return true;
 }
 
-//-----------------------------------------------
-bool DataCandleTersedia()
+//--------------------------------------------------
+bool DataCandleTersedia(ENUM_TIMEFRAMES tf)
 {
    long synchronized = 0;
 
    if(!SeriesInfoInteger(
-      InpSymbol, InpEntryTF, SERIES_SYNCHRONIZED, synchronized))
-   {
+      InpSymbol, tf, SERIES_SYNCHRONIZED, synchronized))
       return false;
-   }
 
    if(synchronized == 0)
       return false;
 
-   if(Bars(InpSymbol, InpEntryTF) < 100)
-   {
-      Print("Data candle belum cukup.");
+   return Bars(InpSymbol, tf) >= 100;
+}
+
+//--------------------------------------------------
+bool ValidasiATR()
+{
+   if(atrHandle == INVALID_HANDLE)
       return false;
-   }
+
+   if(BarsCalculated(atrHandle) < ATRPeriod + 2)
+      return false;
+
+   double atrBuffer[1];
+
+   if(CopyBuffer(atrHandle, 0, 1, 1, atrBuffer) != 1)
+      return false;
+
+   if(atrBuffer[0] <= 0)
+      return false;
 
    return true;
 }
 
-//-----------------------------------------------
+//--------------------------------------------------
 void OnTick()
 {
-   // Fondasi pemeriksaan saja; tidak membuka transaksi.
+   // Tidak membuka posisi.
    if(!ValidasiHargaDanSpread())
       return;
 
-   if(!DataCandleTersedia())
+   if(!DataCandleTersedia(PERIOD_M1))
+      return;
+
+   if(!DataCandleTersedia(PERIOD_M5))
+      return;
+
+   if(!DataCandleTersedia(InpEntryTF))
+      return;
+
+   if(!ValidasiATR())
       return;
 
    datetime barTime = iTime(InpSymbol, InpEntryTF, 0);
@@ -135,14 +162,16 @@ void OnTick()
    if(barTime != lastBarTime)
    {
       lastBarTime = barTime;
-      Print("Validasi dasar lolos. Simbol=", InpSymbol,
-            ", timeframe=", EnumToString(InpEntryTF));
+      Print("Validasi dasar M1/M5 dan ATR berhasil. Simbol=",
+            InpSymbol, ", TF=", EnumToString(InpEntryTF));
    }
 
-   // TODO: Bias M1/M5/HTF.
-   // TODO: Liquidity sweep, displacement ATR, MSS.
-   // TODO: FVG + CE50, Order Block, validasi zona.
+   // Belum ada logika entry.
+   // TODO: Bias multi-timeframe.
+   // TODO: Sweep, displacement ATR, MSS.
+   // TODO: FVG + CE50 dan Order Block.
+   // TODO: Zona Super, Biasa, Retest.
    // TODO: Entry, SL, TP zona lawan sejenis.
-   // TODO: Risk Guardian, daily loss, Profit Lock.
-   // TODO: News Intelligence dan tes keamanan.
+   // TODO: Risk Guardian dan Profit Lock.
+   // TODO: News Intelligence.
 }
