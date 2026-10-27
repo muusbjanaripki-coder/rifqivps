@@ -372,3 +372,60 @@ bool DeteksiMSS(ENUM_TIMEFRAMES tf, bool bullish)
       return close1 < swingLow;
    }
 }
+
+ //--------------------------------------------------
+// MODUL 5: FAIR VALUE GAP (FVG) + CE50
+// Membaca tiga candle yang sudah tertutup.
+// Tidak membuka transaksi.
+
+struct ZonaFVG
+{
+   bool valid;
+   bool bullish;
+   double batasBawah;
+   double batasAtas;
+   double ce50;
+};
+
+ZonaFVG DeteksiFVG(ENUM_TIMEFRAMES tf)
+{
+   ZonaFVG zona;
+   zona.valid = false;
+   zona.bullish = false;
+   zona.batasBawah = 0.0;
+   zona.batasAtas = 0.0;
+   zona.ce50 = 0.0;
+
+   // Candle terbaru yang tertutup = shift 1.
+   // Bandingkan dengan candle shift 3.
+   double high3 = iHigh(InpSymbol, tf, 3);
+   double low3  = iLow(InpSymbol, tf, 3);
+   double high1 = iHigh(InpSymbol, tf, 1);
+   double low1  = iLow(InpSymbol, tf, 1);
+
+   if(high3 <= 0.0 || low3 <= 0.0 ||
+      high1 <= 0.0 || low1 <= 0.0)
+      return zona;
+
+   // Bullish FVG: low candle 1 di atas high candle 3.
+   if(low1 > high3)
+   {
+      zona.valid = true;
+      zona.bullish = true;
+      zona.batasBawah = high3;
+      zona.batasAtas = low1;
+   }
+   // Bearish FVG: high candle 1 di bawah low candle 3.
+   else if(high1 < low3)
+   {
+      zona.valid = true;
+      zona.bullish = false;
+      zona.batasBawah = high1;
+      zona.batasAtas = low3;
+   }
+
+   if(zona.valid)
+      zona.ce50 = (zona.batasBawah + zona.batasAtas) / 2.0;
+
+   return zona;
+}
