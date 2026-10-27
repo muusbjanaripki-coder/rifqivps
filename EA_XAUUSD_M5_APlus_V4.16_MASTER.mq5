@@ -6,8 +6,10 @@
 
 CTrade trade;
 
-// APlus V4.16 MASTER
-// Fondasi validasi saja. Tidak membuka transaksi.
+//==================================================
+// EA XAUUSD M5 APLUS V4.16 MASTER
+// MODE AMAN: BELUM MEMBUKA TRANSAKSI OTOMATIS
+//==================================================
 
 input string InpSymbol = "XAUUSD";
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
@@ -24,17 +26,73 @@ input int SpreadMaxPoints = 250;
 input int ATRPeriod = 14;
 input ulong MagicNumber = 416001;
 
+input int SwingLookback = 3;
+input int SwingScanBars = 100;
+
+input double DisplacementATRMultiplier = 1.5;
+input double MinBodyToRangeRatio = 0.65;
+input double MinFVG_ATR = 0.10;
+
 datetime lastBarTime = 0;
 int atrHandle = INVALID_HANDLE;
 
 //--------------------------------------------------
+// TIPE DATA ZONA
+//--------------------------------------------------
+
+enum KategoriZona
+{
+   ZONA_SUPER = 0,
+   ZONA_BIASA = 1,
+   ZONA_RETEST = 2
+};
+
+struct ZonaFVG
+{
+   bool valid;
+   bool bullish;
+   double batasBawah;
+   double batasAtas;
+   double ce50;
+};
+
+struct ZonaOB
+{
+   bool valid;
+   bool bullish;
+   double batasBawah;
+   double batasAtas;
+   datetime waktu;
+};
+
+struct DataZona
+{
+   bool valid;
+   bool bullish;
+   KategoriZona kategori;
+   double batasBawah;
+   double batasAtas;
+   double ce50;
+   datetime waktu;
+};
+
+//--------------------------------------------------
+// INISIALISASI DAN PEMBERSIHAN
+//--------------------------------------------------
+
 int OnInit()
 {
    if(RiskNormalPct <= 0 || RiskNormalPct > 100 ||
       RiskSuperPct <= 0 || RiskSuperPct > 100 ||
       DailyLossLimitPct <= 0 || DailyLossLimitPct > 100 ||
       SpreadMaxPoints <= 0 || ATRPeriod < 2 ||
-      MaxSuper < 1 || MaxBiasa < 1 || MaxRetest < 1)
+      MaxSuper < 1 || MaxBiasa < 1 || MaxRetest < 1 ||
+      SwingLookback < 1 ||
+      SwingScanBars <= SwingLookback * 2 ||
+      DisplacementATRMultiplier <= 0 ||
+      MinBodyToRangeRatio <= 0 ||
+      MinBodyToRangeRatio > 1 ||
+      MinFVG_ATR < 0)
    {
       Print("ERROR: Parameter EA tidak valid.");
       return INIT_PARAMETERS_INCORRECT;
@@ -56,13 +114,12 @@ int OnInit()
 
    trade.SetExpertMagicNumber(MagicNumber);
 
-   Print("APlus V4.16: validasi dasar aktif.");
-   Print("Mode aman: transaksi otomatis tidak aktif.");
+   Print("APlus V4.16 MASTER berhasil diinisialisasi.");
+   Print("MODE AMAN: tidak membuka transaksi otomatis.");
 
    return INIT_SUCCEEDED;
 }
 
-//--------------------------------------------------
 void OnDeinit(const int reason)
 {
    if(atrHandle != INVALID_HANDLE)
@@ -73,6 +130,9 @@ void OnDeinit(const int reason)
 }
 
 //--------------------------------------------------
+// VALIDASI DATA PASAR
+//--------------------------------------------------
+
 bool ValidasiHargaDanSpread()
 {
    MqlTick tick;
@@ -91,16 +151,11 @@ bool ValidasiHargaDanSpread()
    double spreadPoints = (tick.ask - tick.bid) / point;
 
    if(spreadPoints > SpreadMaxPoints)
-   {
-      Print("Spread melebihi batas: ",
-            DoubleToString(spreadPoints, 1), " points");
       return false;
-   }
 
    return true;
 }
 
-//--------------------------------------------------
 bool DataCandleTersedia(ENUM_TIMEFRAMES tf)
 {
    long synchronized = 0;
@@ -115,7 +170,6 @@ bool DataCandleTersedia(ENUM_TIMEFRAMES tf)
    return Bars(InpSymbol, tf) >= 100;
 }
 
-//--------------------------------------------------
 bool ValidasiATR()
 {
    if(atrHandle == INVALID_HANDLE)
@@ -124,83 +178,58 @@ bool ValidasiATR()
    if(BarsCalculated(atrHandle) < ATRPeriod + 2)
       return false;
 
-   double atrBuffer[1];
+   double atr[1];
 
-   if(CopyBuffer(atrHandle, 0, 1, 1, atrBuffer) != 1)
+   if(CopyBuffer(atrHandle, 0, 1, 1, atr) != 1)
       return false;
 
-   if(atrBuffer[0] <= 0)
-      return false;
+   return atr[0] > 0;
+}
 
-   return true;
+double AmbilATR(ENUM_TIMEFRAMES tf)
+{
+   int handle = iATR(InpSymbol, tf, ATRPeriod);
+
+   if(handle == INVALID_HANDLE)
+      return 0.0;
+
+   double buffer[1];
+
+   bool berhasil =
+      BarsCalculated(handle) >= ATRPeriod + 2 &&
+      CopyBuffer(handle, 0, 1, 1, buffer) == 1;
+
+   IndicatorRelease(handle);
+
+   if(!berhasil || buffer[0] <= 0)
+      return 0.0;
+
+   return buffer[0];
 }
 
 //--------------------------------------------------
-void OnTick()
-{
-   // Tidak membuka posisi.
-   if(!ValidasiHargaDanSpread())
-      return;
-
-   if(!DataCandleTersedia(PERIOD_M1))
-      return;
-
-   if(!DataCandleTersedia(PERIOD_M5))
-      return;
-
-   if(!DataCandleTersedia(InpEntryTF))
-      return;
-
-   if(!ValidasiATR())
-      return;
-
-   datetime barTime = iTime(InpSymbol, InpEntryTF, 0);
-
-   if(barTime <= 0)
-      return;
-
-   if(barTime != lastBarTime)
-   {
-      lastBarTime = barTime;
-      Print("Validasi dasar M1/M5 dan ATR berhasil. Simbol=",
-            InpSymbol, ", TF=", EnumToString(InpEntryTF));
-   }
-
-   // Belum ada logika entry.
-   // TODO: Bias multi-timeframe.
-   // TODO: Sweep, displacement ATR, MSS.
-   // TODO: FVG + CE50 dan Order Block.
-   // TODO: Zona Super, Biasa, Retest.
-   // TODO: Entry, SL, TP zona lawan sejenis.
-   // TODO: Risk Guardian dan Profit Lock.
-   // TODO: News Intelligence.
-}
-
- //--------------------------------------------------
-// MODUL 1: DETEKSI SWING HIGH DAN SWING LOW
-// Hanya membaca struktur candle; tidak membuka transaksi.
-
-input int SwingLookback = 3;
-input int SwingScanBars = 100;
+// MODUL 1: SWING HIGH DAN SWING LOW
+//--------------------------------------------------
 
 bool DeteksiSwingHigh(ENUM_TIMEFRAMES tf, int shift)
 {
-   if(SwingLookback < 1 || shift <= SwingLookback)
-      return false;
+   int total = Bars(InpSymbol, tf);
 
-   if(shift + SwingLookback >= Bars(InpSymbol, tf))
+   if(SwingLookback < 1 || shift <= SwingLookback ||
+      shift + SwingLookback >= total)
       return false;
 
    double nilai = iHigh(InpSymbol, tf, shift);
+
    if(nilai <= 0)
       return false;
 
    for(int i = 1; i <= SwingLookback; i++)
    {
-      if(iHigh(InpSymbol, tf, shift-i) >= nilai)
+      if(iHigh(InpSymbol, tf, shift - i) >= nilai)
          return false;
 
-      if(iHigh(InpSymbol, tf, shift+i) > nilai)
+      if(iHigh(InpSymbol, tf, shift + i) > nilai)
          return false;
    }
 
@@ -209,40 +238,46 @@ bool DeteksiSwingHigh(ENUM_TIMEFRAMES tf, int shift)
 
 bool DeteksiSwingLow(ENUM_TIMEFRAMES tf, int shift)
 {
-   if(SwingLookback < 1 || shift <= SwingLookback)
-      return false;
+   int total = Bars(InpSymbol, tf);
 
-   if(shift + SwingLookback >= Bars(InpSymbol, tf))
+   if(SwingLookback < 1 || shift <= SwingLookback ||
+      shift + SwingLookback >= total)
       return false;
 
    double nilai = iLow(InpSymbol, tf, shift);
+
    if(nilai <= 0)
       return false;
 
    for(int i = 1; i <= SwingLookback; i++)
    {
-      if(iLow(InpSymbol, tf, shift-i) <= nilai)
+      if(iLow(InpSymbol, tf, shift - i) <= nilai)
          return false;
 
-      if(iLow(InpSymbol, tf, shift+i) < nilai)
+      if(iLow(InpSymbol, tf, shift + i) < nilai)
          return false;
    }
 
    return true;
 }
 
-// Mengambil swing terakhir yang sudah terkonfirmasi.
 double AmbilSwingTerakhir(ENUM_TIMEFRAMES tf, bool cariHigh)
 {
-   if(SwingScanBars <= SwingLookback * 2)
+   int total = Bars(InpSymbol, tf);
+
+   if(total <= SwingLookback * 2 + 2)
       return 0.0;
 
-   int batas = MathMin(
+   int batas = (int)MathMin(
       SwingScanBars,
-      Bars(InpSymbol, tf) - SwingLookback - 1
+      total - SwingLookback - 1
    );
 
-   for(int shift = SwingLookback + 1; shift < batas; shift++)
+   // Shift terkecil yang diuji adalah swing terbaru
+   // yang sudah mempunyai candle konfirmasi di sebelah kanan.
+   for(int shift = SwingLookback + 1;
+       shift < batas;
+       shift++)
    {
       if(cariHigh && DeteksiSwingHigh(tf, shift))
          return iHigh(InpSymbol, tf, shift);
@@ -251,86 +286,62 @@ double AmbilSwingTerakhir(ENUM_TIMEFRAMES tf, bool cariHigh)
          return iLow(InpSymbol, tf, shift);
    }
 
- //--------------------------------------------------
-// MODUL 2: DETEKSI LIQUIDITY SWEEP
-// Hanya mendeteksi sweep pada candle yang sudah tertutup.
-// Tidak membuka transaksi.
+   return 0.0;
+}
+
+//--------------------------------------------------
+// MODUL 2: LIQUIDITY SWEEP
+//--------------------------------------------------
 
 bool DeteksiSweepHigh(ENUM_TIMEFRAMES tf)
 {
    double swingHigh = AmbilSwingTerakhir(tf, true);
-   if(swingHigh <= 0.0)
+
+   if(swingHigh <= 0)
       return false;
 
-   double highCandle = iHigh(InpSymbol, tf, 1);
-   double closeCandle = iClose(InpSymbol, tf, 1);
+   double high1 = iHigh(InpSymbol, tf, 1);
+   double close1 = iClose(InpSymbol, tf, 1);
 
-   if(highCandle <= 0.0 || closeCandle <= 0.0)
-      return false;
-
-   // Harga menembus swing high, lalu ditutup kembali di bawahnya.
-   return highCandle > swingHigh && closeCandle < swingHigh;
+   return high1 > swingHigh && close1 < swingHigh;
 }
 
 bool DeteksiSweepLow(ENUM_TIMEFRAMES tf)
 {
    double swingLow = AmbilSwingTerakhir(tf, false);
-   if(swingLow <= 0.0)
+
+   if(swingLow <= 0)
       return false;
 
-   double lowCandle = iLow(InpSymbol, tf, 1);
-   double closeCandle = iClose(InpSymbol, tf, 1);
+   double low1 = iLow(InpSymbol, tf, 1);
+   double close1 = iClose(InpSymbol, tf, 1);
 
-   if(lowCandle <= 0.0 || closeCandle <= 0.0)
-      return false;
-
-   // Harga menembus swing low, lalu ditutup kembali di atasnya.
-   return lowCandle < swingLow && closeCandle > swingLow;
+   return low1 < swingLow && close1 > swingLow;
 }
 
-   return 0.0;
-}
-
- //--------------------------------------------------
+//--------------------------------------------------
 // MODUL 3: DISPLACEMENT BERBASIS ATR
-// Memeriksa candle tertutup; tidak membuka transaksi.
-
-input double DisplacementATRMultiplier = 1.5;
-input double MinBodyToRangeRatio = 0.65;
+//--------------------------------------------------
 
 bool DeteksiDisplacement(ENUM_TIMEFRAMES tf, bool bullish)
 {
-   if(DisplacementATRMultiplier <= 0.0 ||
-      MinBodyToRangeRatio <= 0.0 ||
-      MinBodyToRangeRatio > 1.0)
+   double atr = AmbilATR(tf);
+
+   if(atr <= 0)
       return false;
 
-   int handle = iATR(InpSymbol, tf, ATRPeriod);
-   if(handle == INVALID_HANDLE)
-      return false;
-
-   double atr[1];
-   bool dataSiap =
-      BarsCalculated(handle) >= ATRPeriod + 2 &&
-      CopyBuffer(handle, 0, 1, 1, atr) == 1;
-
-   IndicatorRelease(handle);
-
-   if(!dataSiap || atr[0] <= 0.0)
-      return false;
-
-   double open1  = iOpen(InpSymbol, tf, 1);
+   double open1 = iOpen(InpSymbol, tf, 1);
    double close1 = iClose(InpSymbol, tf, 1);
-   double high1  = iHigh(InpSymbol, tf, 1);
-   double low1   = iLow(InpSymbol, tf, 1);
+   double high1 = iHigh(InpSymbol, tf, 1);
+   double low1 = iLow(InpSymbol, tf, 1);
 
    double range = high1 - low1;
    double body = MathAbs(close1 - open1);
 
-   if(range <= 0.0)
+   if(range <= 0)
       return false;
 
-   if(body < atr[0] * DisplacementATRMultiplier)
+   if(body < atr * DisplacementATRMultiplier)
       return false;
 
    if(body / range < MinBodyToRangeRatio)
@@ -342,72 +353,55 @@ bool DeteksiDisplacement(ENUM_TIMEFRAMES tf, bool bullish)
    return close1 < open1;
 }
 
- //--------------------------------------------------
+//--------------------------------------------------
 // MODUL 4: MARKET STRUCTURE SHIFT (MSS)
-// Pemeriksaan struktur sederhana; tidak membuka transaksi.
+//--------------------------------------------------
 
 bool DeteksiMSS(ENUM_TIMEFRAMES tf, bool bullish)
 {
    double close1 = iClose(InpSymbol, tf, 1);
 
-   if(close1 <= 0.0)
+   if(close1 <= 0)
       return false;
 
    if(bullish)
    {
       double swingHigh = AmbilSwingTerakhir(tf, true);
 
-      if(swingHigh <= 0.0)
-         return false;
-
-      return close1 > swingHigh;
+      return swingHigh > 0 && close1 > swingHigh;
    }
-   else
-   {
-      double swingLow = AmbilSwingTerakhir(tf, false);
 
-      if(swingLow <= 0.0)
-         return false;
+   double swingLow = AmbilSwingTerakhir(tf, false);
 
-      return close1 < swingLow;
-   }
+   return swingLow > 0 && close1 < swingLow;
 }
 
- //--------------------------------------------------
-// MODUL 5: FAIR VALUE GAP (FVG) + CE50
-// Membaca tiga candle yang sudah tertutup.
-// Tidak membuka transaksi.
-
-struct ZonaFVG
-{
-   bool valid;
-   bool bullish;
-   double batasBawah;
-   double batasAtas;
-   double ce50;
-};
+//--------------------------------------------------
+// MODUL 5: FVG DAN CE50
+//--------------------------------------------------
 
 ZonaFVG DeteksiFVG(ENUM_TIMEFRAMES tf)
 {
    ZonaFVG zona;
+
    zona.valid = false;
    zona.bullish = false;
-   zona.batasBawah = 0.0;
-   zona.batasAtas = 0.0;
-   zona.ce50 = 0.0;
+   zona.batasBawah = 0;
+   zona.batasAtas = 0;
+   zona.ce50 = 0;
 
-   // Candle terbaru yang tertutup = shift 1.
-   // Bandingkan dengan candle shift 3.
-   double high3 = iHigh(InpSymbol, tf, 3);
-   double low3  = iLow(InpSymbol, tf, 3);
-   double high1 = iHigh(InpSymbol, tf, 1);
-   double low1  = iLow(InpSymbol, tf, 1);
-
-   if(high3 <= 0.0 || low3 <= 0.0 ||
-      high1 <= 0.0 || low1 <= 0.0)
+   if(Bars(InpSymbol, tf) < 10)
       return zona;
 
-   // Bullish FVG: low candle 1 di atas high candle 3.
+   double high3 = iHigh(InpSymbol, tf, 3);
+   double low3 = iLow(InpSymbol, tf, 3);
+   double high1 = iHigh(InpSymbol, tf, 1);
+   double low1 = iLow(InpSymbol, tf, 1);
+
+   if(high3 <= 0 || low3 <= 0 ||
+      high1 <= 0 || low1 <= 0)
+      return zona;
+
    if(low1 > high3)
    {
       zona.valid = true;
@@ -415,7 +409,6 @@ ZonaFVG DeteksiFVG(ENUM_TIMEFRAMES tf)
       zona.batasBawah = high3;
       zona.batasAtas = low1;
    }
-   // Bearish FVG: high candle 1 di bawah low candle 3.
    else if(high1 < low3)
    {
       zona.valid = true;
@@ -425,50 +418,59 @@ ZonaFVG DeteksiFVG(ENUM_TIMEFRAMES tf)
    }
 
    if(zona.valid)
-      zona.ce50 = (zona.batasBawah + zona.batasAtas) / 2.0;
+   {
+      double atr = AmbilATR(tf);
+
+      if(atr <= 0 ||
+         zona.batasAtas - zona.batasBawah <
+         atr * MinFVG_ATR)
+      {
+         zona.valid = false;
+         return zona;
+      }
+
+      zona.ce50 =
+         (zona.batasBawah + zona.batasAtas) / 2.0;
+   }
 
    return zona;
 }
 
- //--------------------------------------------------
-// MODUL 6: ORDER BLOCK (OB) DASAR
-// Mencari candle berlawanan sebelum displacement.
-// Tidak membuka transaksi.
-
-struct ZonaOB
-{
-   bool valid;
-   bool bullish;
-   double batasBawah;
-   double batasAtas;
-   datetime waktu;
-};
+//--------------------------------------------------
+// MODUL 6: ORDER BLOCK DASAR
+//--------------------------------------------------
 
 ZonaOB DeteksiOB(ENUM_TIMEFRAMES tf, bool bullish)
 {
    ZonaOB zona;
+
    zona.valid = false;
    zona.bullish = bullish;
-   zona.batasBawah = 0.0;
-   zona.batasAtas = 0.0;
+   zona.batasBawah = 0;
+   zona.batasAtas = 0;
    zona.waktu = 0;
 
-   // Cari candle sumber di antara candle 2 sampai 10.
-   for(int shift = 2; shift <= 10; shift++)
+   int total = Bars(InpSymbol, tf);
+
+   if(total < 20)
+      return zona;
+
+   // Cari candle berlawanan sebelum candle displacement.
+   // Konfirmasi displacement dilakukan terpisah.
+   for(int shift = 2; shift <= 10 && shift < total; shift++)
    {
       double openC = iOpen(InpSymbol, tf, shift);
       double closeC = iClose(InpSymbol, tf, shift);
       double highC = iHigh(InpSymbol, tf, shift);
       double lowC = iLow(InpSymbol, tf, shift);
 
-      if(openC <= 0.0 || closeC <= 0.0 ||
-         highC <= lowC)
+      if(highC <= lowC || openC <= 0 || closeC <= 0)
          continue;
 
-      bool candleBerlawanan =
-         bullish ? (closeC < openC) : (closeC > openC);
+      bool berlawanan =
+         bullish ? closeC < openC : closeC > openC;
 
-      if(!candleBerlawanan)
+      if(!berlawanan)
          continue;
 
       zona.valid = true;
@@ -480,4 +482,199 @@ ZonaOB DeteksiOB(ENUM_TIMEFRAMES tf, bool bullish)
    }
 
    return zona;
+}
+
+//--------------------------------------------------
+// MODUL 7: BIAS MULTI-TIMEFRAME
+//--------------------------------------------------
+
+bool BiasBullish(ENUM_TIMEFRAMES tf)
+{
+   double close1 = iClose(InpSymbol, tf, 1);
+   double close2 = iClose(InpSymbol, tf, 2);
+
+   return close1 > 0 && close2 > 0 && close1 > close2;
+}
+
+bool BiasBearish(ENUM_TIMEFRAMES tf)
+{
+   double close1 = iClose(InpSymbol, tf, 1);
+   double close2 = iClose(InpSymbol, tf, 2);
+
+   return close1 > 0 && close2 > 0 && close1 < close2;
+}
+
+bool KonfirmasiBiasMTF(bool bullish)
+{
+   if(!DataCandleTersedia(PERIOD_H1) ||
+      !DataCandleTersedia(PERIOD_M15))
+      return false;
+
+   if(bullish)
+      return BiasBullish(PERIOD_H1) &&
+             BiasBullish(PERIOD_M15);
+
+   return BiasBearish(PERIOD_H1) &&
+          BiasBearish(PERIOD_M15);
+}
+
+//--------------------------------------------------
+// MODUL 8: FILTER MITIGASI DAN INVALIDASI ZONA
+//--------------------------------------------------
+
+bool ZonaMasihLayak(
+   ENUM_TIMEFRAMES tf,
+   bool bullish,
+   double batasBawah,
+   double batasAtas,
+   int shiftZona
+)
+{
+   if(batasBawah <= 0 ||
+      batasAtas <= batasBawah ||
+      shiftZona < 1)
+      return false;
+
+   // Invalidation sederhana:
+   // bullish invalid jika candle berikutnya menutup
+   // di bawah batas bawah zona.
+   // bearish invalid jika menutup di atas batas atas.
+   for(int shift = shiftZona - 1; shift >= 1; shift--)
+   {
+      double closeC = iClose(InpSymbol, tf, shift);
+
+      if(closeC <= 0)
+         return false;
+
+      if(bullish && closeC < batasBawah)
+         return false;
+
+      if(!bullish && closeC > batasAtas)
+         return false;
+   }
+
+   // Tolak zona yang sudah pernah dimasuki harga
+   // setelah candle pembentuk zona.
+   for(int shift = shiftZona - 1; shift >= 1; shift--)
+   {
+      double highC = iHigh(InpSymbol, tf, shift);
+      double lowC = iLow(InpSymbol, tf, shift);
+
+      bool overlap =
+         highC >= batasBawah && lowC <= batasAtas;
+
+      if(overlap)
+         return false;
+   }
+
+   return true;
+}
+
+//--------------------------------------------------
+// MODUL 9: KATEGORI ZONA
+//--------------------------------------------------
+
+int BatasEntryKategori(KategoriZona kategori)
+{
+   if(kategori == ZONA_SUPER)
+      return MaxSuper;
+
+   if(kategori == ZONA_BIASA)
+      return MaxBiasa;
+
+   return MaxRetest;
+}
+
+// Klasifikasi awal berdasarkan bukti yang tersedia.
+// Ini bukan skor kualitas final atau izin entry.
+KategoriZona KlasifikasiZona(
+   bool sweep,
+   bool displacement,
+   bool mss,
+   bool fvg,
+   bool ob
+)
+{
+   int skor = 0;
+
+   if(sweep)        skor++;
+   if(displacement) skor++;
+   if(mss)          skor++;
+   if(fvg)          skor++;
+   if(ob)           skor++;
+
+   if(skor >= 5)
+      return ZONA_SUPER;
+
+   if(skor >= 3)
+      return ZONA_BIASA;
+
+   return ZONA_RETEST;
+}
+
+//--------------------------------------------------
+// MODUL 10: PEMERIKSAAN GABUNGAN
+//--------------------------------------------------
+
+bool ValidasiSinyalDasar(bool bullish)
+{
+   bool sweep = bullish
+      ? DeteksiSweepLow(InpEntryTF)
+      : DeteksiSweepHigh(InpEntryTF);
+
+   bool displacement =
+      DeteksiDisplacement(InpEntryTF, bullish);
+
+   bool mss = DeteksiMSS(InpEntryTF, bullish);
+
+   ZonaFVG fvg = DeteksiFVG(InpEntryTF);
+   ZonaOB ob = DeteksiOB(InpEntryTF, bullish);
+
+   bool fvgSearah = fvg.valid && fvg.bullish == bullish;
+
+   bool bias = KonfirmasiBiasMTF(bullish);
+
+   return sweep &&
+          displacement &&
+          mss &&
+          fvgSearah &&
+          ob.valid &&
+          bias;
+}
+
+//--------------------------------------------------
+// MODUL 11: PEMANTAUAN DASAR
+//--------------------------------------------------
+
+void OnTick()
+{
+   // Mode aman: fungsi ini tidak pernah mengirim order.
+   if(!ValidasiHargaDanSpread())
+      return;
+
+   if(!DataCandleTersedia(PERIOD_M1) ||
+      !DataCandleTersedia(PERIOD_M5) ||
+      !DataCandleTersedia(PERIOD_M15) ||
+      !DataCandleTersedia(PERIOD_H1) ||
+      !DataCandleTersedia(PERIOD_H4) ||
+      !DataCandleTersedia(PERIOD_D1))
+      return;
+
+   if(!ValidasiATR())
+      return;
+
+   datetime barTime = iTime(InpSymbol, InpEntryTF, 0);
+
+   if(barTime <= 0 || barTime == lastBarTime)
+      return;
+
+   lastBarTime = barTime;
+
+   bool buyValidasi = ValidasiSinyalDasar(true);
+   bool sellValidasi = ValidasiSinyalDasar(false);
+
+   Print("APlus V4.16 | simbol=", InpSymbol,
+         " | BUY filter=", buyValidasi,
+         " | SELL filter=", sellValidasi,
+         " | mode aman aktif.");
 }
