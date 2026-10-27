@@ -341,3 +341,34 @@ bool DeteksiDisplacement(ENUM_TIMEFRAMES tf, bool bullish)
 
    return close1 < open1;
 }
+
+ //--------------------------------------------------
+// MODUL 4: MARKET STRUCTURE SHIFT (MSS)
+// Pemeriksaan struktur sederhana; tidak membuka transaksi.
+
+bool DeteksiMSS(ENUM_TIMEFRAMES tf, bool bullish)
+{
+   double close1 = iClose(InpSymbol, tf, 1);
+
+   if(close1 <= 0.0)
+      return false;
+
+   if(bullish)
+   {
+      double swingHigh = AmbilSwingTerakhir(tf, true);
+
+      if(swingHigh <= 0.0)
+         return false;
+
+      return close1 > swingHigh;
+   }
+   else
+   {
+      double swingLow = AmbilSwingTerakhir(tf, false);
+
+      if(swingLow <= 0.0)
+         return false;
+
+      return close1 < swingLow;
+   }
+}
