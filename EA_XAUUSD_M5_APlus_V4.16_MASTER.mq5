@@ -429,3 +429,55 @@ ZonaFVG DeteksiFVG(ENUM_TIMEFRAMES tf)
 
    return zona;
 }
+
+ //--------------------------------------------------
+// MODUL 6: ORDER BLOCK (OB) DASAR
+// Mencari candle berlawanan sebelum displacement.
+// Tidak membuka transaksi.
+
+struct ZonaOB
+{
+   bool valid;
+   bool bullish;
+   double batasBawah;
+   double batasAtas;
+   datetime waktu;
+};
+
+ZonaOB DeteksiOB(ENUM_TIMEFRAMES tf, bool bullish)
+{
+   ZonaOB zona;
+   zona.valid = false;
+   zona.bullish = bullish;
+   zona.batasBawah = 0.0;
+   zona.batasAtas = 0.0;
+   zona.waktu = 0;
+
+   // Cari candle sumber di antara candle 2 sampai 10.
+   for(int shift = 2; shift <= 10; shift++)
+   {
+      double openC = iOpen(InpSymbol, tf, shift);
+      double closeC = iClose(InpSymbol, tf, shift);
+      double highC = iHigh(InpSymbol, tf, shift);
+      double lowC = iLow(InpSymbol, tf, shift);
+
+      if(openC <= 0.0 || closeC <= 0.0 ||
+         highC <= lowC)
+         continue;
+
+      bool candleBerlawanan =
+         bullish ? (closeC < openC) : (closeC > openC);
+
+      if(!candleBerlawanan)
+         continue;
+
+      zona.valid = true;
+      zona.batasBawah = lowC;
+      zona.batasAtas = highC;
+      zona.waktu = iTime(InpSymbol, tf, shift);
+
+      return zona;
+   }
+
+   return zona;
+}
