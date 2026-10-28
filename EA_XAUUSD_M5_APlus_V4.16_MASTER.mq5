@@ -749,8 +749,16 @@ bool ValidasiSinyalDasar(bool bullish)
    bool bias = KonfirmasiBiasMTF(bullish);
 
    if(!sweep || !displacement || !mss ||
-      !fvgSearah || !ob.valid || !bias)
-      return false;
+   !fvgSearah || !ob.valid || !bias)
+   return false;
+
+if(!ZonaMasihLayak(
+      InpEntryTF,
+      fvg.bullish,
+      fvg.batasBawah,
+      fvg.batasAtas,
+      1))
+   return false;
 
    // Bentuk data zona dari FVG yang tervalidasi.
    DataZona zona;
@@ -944,15 +952,6 @@ double HitungBatasKerugianHarian()
 bool RiskGuardianBolehLanjut()
 {
    if(!RiskGuardianValid())
-   {
-      Print("Risk Guardian: parameter risiko tidak valid.");
-      return false;
-   }
-
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-   double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
-
-   if(balance <= 0.0 || equity <= 0.0)
       return false;
 
    double batasRugi = HitungBatasKerugianHarian();
@@ -960,11 +959,31 @@ bool RiskGuardianBolehLanjut()
    if(batasRugi <= 0.0)
       return false;
 
-   double floatingLoss = balance - equity;
+   double floatingLossEA = 0.0;
 
-   if(floatingLoss >= batasRugi)
+   for(int i = 0; i < PositionsTotal(); i++)
    {
-      Print("Risk Guardian: batas floating loss tercapai.");
+      ulong ticket = PositionGetTicket(i);
+
+      if(ticket == 0)
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol)
+         continue;
+
+      if((ulong)PositionGetInteger(POSITION_MAGIC) != MagicNumber)
+         continue;
+
+      double profit = PositionGetDouble(POSITION_PROFIT)
+                    + PositionGetDouble(POSITION_SWAP);
+
+      if(profit < 0.0)
+         floatingLossEA += -profit;
+   }
+
+   if(floatingLossEA >= batasRugi)
+   {
+      Print("Risk Guardian: batas floating loss EA tercapai.");
       return false;
    }
 
@@ -975,6 +994,10 @@ bool RiskGuardianBolehLanjut()
 // MODUL 15: DAILY LOSS GUARD
 // MODE AMAN: pemantauan saja
 //==================================================
+
+
+double EkuitasAwalHari = 0.0;
+datetime HariTercatat = 0;
 
 datetime AwalHariServer()
 {
@@ -988,62 +1011,47 @@ datetime AwalHariServer()
    return StructToTime(waktu);
 }
 
-double HitungKerugianTerealisasiHariIni()
+bool PerbaruiEkuitasAwalHari()
 {
-   datetime mulai = AwalHariServer();
-   datetime sekarang = TimeCurrent();
+   datetime hariIni = AwalHariServer();
 
-   if(sekarang <= 0 || mulai <= 0)
-      return -1.0;
+   if(hariIni <= 0)
+      return false;
 
-   if(!HistorySelect(mulai, sekarang))
-      return -1.0;
-
-   double hasilBersih = 0.0;
-   int total = HistoryDealsTotal();
-
-   for(int i = 0; i < total; i++)
+   if(HariTercatat != hariIni)
    {
-      ulong tiket = HistoryDealGetTicket(i);
+      // Jangan menetapkan baseline jika data akun tidak valid.
+      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
 
-      if(tiket == 0)
-         continue;
+      if(equity <= 0.0)
+         return false;
 
-      ENUM_DEAL_TYPE tipe =
-         (ENUM_DEAL_TYPE)HistoryDealGetInteger(
-            tiket, DEAL_TYPE);
+      EkuitasAwalHari = equity;
+      HariTercatat = hariIni;
 
-      if(tipe != DEAL_TYPE_BUY &&
-         tipe != DEAL_TYPE_SELL)
-         continue;
-
-      hasilBersih +=
-         HistoryDealGetDouble(tiket, DEAL_PROFIT) +
-         HistoryDealGetDouble(tiket, DEAL_SWAP) +
-         HistoryDealGetDouble(tiket, DEAL_COMMISSION);
+      Print("Daily Loss Guard: baseline ekuitas hari ini dicatat.");
    }
 
-   return hasilBersih;
+   return EkuitasAwalHari > 0.0;
 }
 
 bool BatasRugiHarianTercapai()
 {
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-
-   if(balance <= 0.0)
+   if(!PerbaruiEkuitasAwalHari())
       return true;
 
-   double hasilHariIni = HitungKerugianTerealisasiHariIni();
+   double equitySekarang = AccountInfoDouble(ACCOUNT_EQUITY);
 
-   if(hasilHariIni < 0.0)
-   {
-      Print("Daily Loss Guard: data riwayat gagal dibaca.");
+   if(equitySekarang <= 0.0)
       return true;
-   }
 
-   double batasRugi = balance * MaxDailyLossPct / 100.0;
+   double batasRugi =
+      EkuitasAwalHari * MaxDailyLossPct / 100.0;
 
-   if(hasilHariIni <= -batasRugi)
+   double kerugianHariIni =
+      EkuitasAwalHari - equitySekarang;
+
+   if(kerugianHariIni >= batasRugi)
    {
       Print("Daily Loss Guard: batas kerugian harian tercapai.");
       return true;
@@ -1051,6 +1059,7 @@ bool BatasRugiHarianTercapai()
 
    return false;
 }
+
 
 //==================================================
 // MODUL 16: NEWS FILTER
@@ -1087,9 +1096,29 @@ bool NewsSedangBerlangsung()
 
 bool NewsFilterBolehLanjut()
 {
-   if(NewsSedangBerlangsung())
+   if(!AktifkanNewsFilter)
+      return true;
+
+   if(NewsMulai <= 0 || NewsSelesai <= 0)
    {
-      Print("News Filter: waktu diblokir.");
+      Print("News Filter: jadwal belum diatur.");
+      return false;
+   }
+
+   if(NewsSelesai <= NewsMulai)
+   {
+      Print("News Filter: jadwal tidak valid.");
+      return false;
+   }
+
+   datetime sekarang = TimeTradeServer();
+
+   if(sekarang <= 0)
+      return false;
+
+   if(sekarang >= NewsMulai && sekarang <= NewsSelesai)
+   {
+      Print("News Filter: pemantauan diblokir pada jadwal berita.");
       return false;
    }
 
@@ -1257,11 +1286,12 @@ input double ProfitLockAktifUSD = 10.0;
 input double ProfitLockMundurUSD = 3.0;
 
 double PuncakEkuitasEA = 0.0;
+double EkuitasAwalProfitLock = 0.0;
 bool ProfitLockTerpicu = false;
 
 void PerbaruiProfitLock()
 {
-   if(!AktifkanProfitLock)
+   if(!AktifkanProfitLock || ProfitLockTerpicu)
       return;
 
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -1269,26 +1299,32 @@ void PerbaruiProfitLock()
    if(equity <= 0.0)
       return;
 
-   if(PuncakEkuitasEA <= 0.0)
+   if(EkuitasAwalProfitLock <= 0.0)
+   {
+      EkuitasAwalProfitLock = equity;
       PuncakEkuitasEA = equity;
+      return;
+   }
 
    if(equity > PuncakEkuitasEA)
       PuncakEkuitasEA = equity;
 
-   double kenaikan = equity -
-                     AccountInfoDouble(ACCOUNT_BALANCE);
+   double profit = equity - EkuitasAwalProfitLock;
+   double penurunan = PuncakEkuitasEA - equity;
 
-   if(kenaikan >= ProfitLockAktifUSD &&
-      PuncakEkuitasEA - equity >= ProfitLockMundurUSD)
+   if(profit >= ProfitLockAktifUSD &&
+      penurunan >= ProfitLockMundurUSD)
    {
       ProfitLockTerpicu = true;
-
-      Print("Profit Lock terpicu. Pemantauan saja; ",
-            "tidak ada posisi yang ditutup otomatis.");
+      Print("Profit Lock terpicu. Mode aman: tidak ada posisi ditutup.");
    }
 }
 
 bool ProfitLockBolehLanjut()
+{
+   PerbaruiProfitLock();
+   return !ProfitLockTerpicu;
+}
 {
    PerbaruiProfitLock();
 
