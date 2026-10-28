@@ -633,54 +633,48 @@ BiasBearish(PERIOD_M15);
 // MODUL 8: FILTER MITIGASI DAN INVALIDASI ZONA
 //--------------------------------------------------
 
+
 bool ZonaMasihLayak(
-ENUM_TIMEFRAMES tf,
-bool bullish,
-double batasBawah,
-double batasAtas,
-int shiftZona
+   ENUM_TIMEFRAMES tf,
+   bool bullish,
+   double batasBawah,
+   double batasAtas,
+   int shiftZona
 )
 {
-if(batasBawah <= 0 ||
-batasAtas <= batasBawah ||
-shiftZona < 1)
-return false;
+   if(batasBawah <= 0.0 ||
+      batasAtas <= batasBawah ||
+      shiftZona < 1)
+      return false;
 
-// Invalidation sederhana:
-// bullish invalid jika candle berikutnya menutup
-// di bawah batas bawah zona.
-// bearish invalid jika menutup di atas batas atas.
-for(int shift = shiftZona - 1; shift >= 1; shift--)
-{
-double closeC = iClose(InpSymbol, tf, shift);
+   int totalBars = Bars(InpSymbol, tf);
 
-if(closeC <= 0)  
-     return false;  
+   if(totalBars <= shiftZona + 1)
+      return false;
 
-  if(bullish && closeC < batasBawah)  
-     return false;  
+   // Periksa candle setelah zona terbentuk.
+   for(int shift = shiftZona - 1; shift >= 1; shift--)
+   {
+      double closeC = iClose(InpSymbol, tf, shift);
+      double highC  = iHigh(InpSymbol, tf, shift);
+      double lowC   = iLow(InpSymbol, tf, shift);
 
-  if(!bullish && closeC > batasAtas)  
-     return false;
+      if(closeC <= 0.0 || highC <= 0.0 || lowC <= 0.0)
+         return false;
 
-}
+      // Zona tidak layak jika sudah ditembus.
+      if(bullish && closeC < batasBawah)
+         return false;
 
-// Tolak zona yang sudah pernah dimasuki harga
-// setelah candle pembentuk zona.
-for(int shift = shiftZona - 1; shift >= 1; shift--)
-{
-double highC = iHigh(InpSymbol, tf, shift);
-double lowC = iLow(InpSymbol, tf, shift);
+      if(!bullish && closeC > batasAtas)
+         return false;
 
-bool overlap =  
-     highC >= batasBawah && lowC <= batasAtas;  
+      // Zona tidak layak jika harga sudah menyentuh area.
+      if(highC >= batasBawah && lowC <= batasAtas)
+         return false;
+   }
 
-  if(overlap)  
-     return false;
-
-}
-
-return true;
+   return true;
 }
 
 //--------------------------------------------------
@@ -752,12 +746,22 @@ bool ValidasiSinyalDasar(bool bullish)
    !fvgSearah || !ob.valid || !bias)
    return false;
 
+int shiftZona = iBarShift(
+   InpSymbol,
+   InpEntryTF,
+   iTime(InpSymbol, InpEntryTF, 1),
+   true
+);
+
+if(shiftZona < 1)
+   return false;
+
 if(!ZonaMasihLayak(
       InpEntryTF,
       fvg.bullish,
       fvg.batasBawah,
       fvg.batasAtas,
-      1))
+      shiftZona))
    return false;
 
    // Bentuk data zona dari FVG yang tervalidasi.
@@ -862,12 +866,13 @@ bool KonfirmasiM1(bool bullish)
 // MODE AMAN: menghitung target saja, tidak membuka order
 //==================================================
 
-bool CariTargetZonaSejenis(
-   DataZona &zonaEntry,
-   DataZona &zonaTarget,
-   double hargaSekarang
-)
-{
+   if(!zonaEntry.valid)
+      return false;
+
+   if(zonaEntry.batasBawah <= 0.0 ||
+      zonaEntry.batasAtas <= zonaEntry.batasBawah ||
+      hargaSekarang <= 0.0)
+      return false;
    if(!ZonaRegistryValid(zonaEntry))
       return false;
 
@@ -879,20 +884,30 @@ bool CariTargetZonaSejenis(
 
    for(int i = 0; i < JumlahZonaRegistry; i++)
    {
-      if(!RegistryZona[i].valid)
-         continue;
+      if(!ZonaRegistryValid(RegistryZona[i]))
+   continue;
 
       // TP harus dari kategori yang sama.
       if(RegistryZona[i].kategori != zonaEntry.kategori)
          continue;
 
-      // Target harus berlawanan arah dengan entry.
-      if(RegistryZona[i].bullish == zonaEntry.bullish)
-         continue;
+      // Target harus berlawanan arah dan berasal dari zona berbeda.
+if(RegistryZona[i].bullish == zonaEntry.bullish)
+   continue;
 
-      double targetHarga =
-         (RegistryZona[i].batasBawah +
-          RegistryZona[i].batasAtas) / 2.0;
+if(RegistryZona[i].waktu == zonaEntry.waktu)
+   continue;
+      double targetHarga = RegistryZona[i].ce50;
+if(targetHarga <= 0.0)
+   continue;
+
+if(zonaEntry.bullish && targetHarga <= hargaSekarang)
+   continue;
+
+if(!zonaEntry.bullish && targetHarga >= hargaSekarang)
+   continue;
+if(targetHarga <= 0.0)
+   continue;
 
       // BUY mencari target di atas harga saat ini.
       // SELL mencari target di bawah harga saat ini.
@@ -904,11 +919,14 @@ bool CariTargetZonaSejenis(
 
       double jarak = MathAbs(targetHarga - hargaSekarang);
 
-      if(jarak < jarakTerbaik)
-      {
-         jarakTerbaik = jarak;
-         indeksTerbaik = i;
-      }
+if(jarak <= 0.0)
+   continue;
+
+if(jarak < jarakTerbaik)
+{
+   jarakTerbaik = jarak;
+   indeksTerbaik = i;
+}
    }
 
    if(indeksTerbaik < 0)
