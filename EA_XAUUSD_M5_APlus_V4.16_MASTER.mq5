@@ -848,3 +848,482 @@ bool KonfirmasiM1(bool bullish)
 
    return close1 < open1;
 }
+//==================================================
+// MODUL 13: TARGET TP ZONA SEJENIS
+// MODE AMAN: menghitung target saja, tidak membuka order
+//==================================================
+
+bool CariTargetZonaSejenis(
+   DataZona &zonaEntry,
+   DataZona &zonaTarget,
+   double hargaSekarang
+)
+{
+   if(!ZonaRegistryValid(zonaEntry))
+      return false;
+
+   if(hargaSekarang <= 0.0)
+      return false;
+
+   double jarakTerbaik = DBL_MAX;
+   int indeksTerbaik = -1;
+
+   for(int i = 0; i < JumlahZonaRegistry; i++)
+   {
+      if(!RegistryZona[i].valid)
+         continue;
+
+      // TP harus dari kategori yang sama.
+      if(RegistryZona[i].kategori != zonaEntry.kategori)
+         continue;
+
+      // Target harus berlawanan arah dengan entry.
+      if(RegistryZona[i].bullish == zonaEntry.bullish)
+         continue;
+
+      double targetHarga =
+         (RegistryZona[i].batasBawah +
+          RegistryZona[i].batasAtas) / 2.0;
+
+      // BUY mencari target di atas harga saat ini.
+      // SELL mencari target di bawah harga saat ini.
+      if(zonaEntry.bullish && targetHarga <= hargaSekarang)
+         continue;
+
+      if(!zonaEntry.bullish && targetHarga >= hargaSekarang)
+         continue;
+
+      double jarak = MathAbs(targetHarga - hargaSekarang);
+
+      if(jarak < jarakTerbaik)
+      {
+         jarakTerbaik = jarak;
+         indeksTerbaik = i;
+      }
+   }
+
+   if(indeksTerbaik < 0)
+      return false;
+
+   zonaTarget = RegistryZona[indeksTerbaik];
+   return true;
+}
+//==================================================
+// MODUL 14: RISK GUARDIAN
+// MODE AMAN: pemantauan risiko, tanpa transaksi otomatis
+//==================================================
+
+input double MaxRiskPerBasketPct = 0.50;
+input double MaxDailyLossPct = 4.0;
+
+bool RiskGuardianValid()
+{
+   if(MaxRiskPerBasketPct <= 0.0 ||
+      MaxRiskPerBasketPct > 100.0)
+      return false;
+
+   if(MaxDailyLossPct <= 0.0 ||
+      MaxDailyLossPct > 100.0)
+      return false;
+
+   return true;
+}
+
+double HitungBatasKerugianHarian()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+
+   if(balance <= 0.0)
+      return 0.0;
+
+   return balance * MaxDailyLossPct / 100.0;
+}
+
+bool RiskGuardianBolehLanjut()
+{
+   if(!RiskGuardianValid())
+   {
+      Print("Risk Guardian: parameter risiko tidak valid.");
+      return false;
+   }
+
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity  = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   if(balance <= 0.0 || equity <= 0.0)
+      return false;
+
+   double batasRugi = HitungBatasKerugianHarian();
+
+   if(batasRugi <= 0.0)
+      return false;
+
+   double floatingLoss = balance - equity;
+
+   if(floatingLoss >= batasRugi)
+   {
+      Print("Risk Guardian: batas floating loss tercapai.");
+      return false;
+   }
+
+   return true;
+}
+//==================================================
+// MODUL 15: DAILY LOSS GUARD
+// MODE AMAN: pemantauan saja
+//==================================================
+
+datetime AwalHariServer()
+{
+   MqlDateTime waktu;
+   TimeToStruct(TimeCurrent(), waktu);
+
+   waktu.hour = 0;
+   waktu.min  = 0;
+   waktu.sec  = 0;
+
+   return StructToTime(waktu);
+}
+
+double HitungKerugianTerealisasiHariIni()
+{
+   datetime mulai = AwalHariServer();
+   datetime sekarang = TimeCurrent();
+
+   if(sekarang <= 0 || mulai <= 0)
+      return -1.0;
+
+   if(!HistorySelect(mulai, sekarang))
+      return -1.0;
+
+   double hasilBersih = 0.0;
+   int total = HistoryDealsTotal();
+
+   for(int i = 0; i < total; i++)
+   {
+      ulong tiket = HistoryDealGetTicket(i);
+
+      if(tiket == 0)
+         continue;
+
+      ENUM_DEAL_TYPE tipe =
+         (ENUM_DEAL_TYPE)HistoryDealGetInteger(
+            tiket, DEAL_TYPE);
+
+      if(tipe != DEAL_TYPE_BUY &&
+         tipe != DEAL_TYPE_SELL)
+         continue;
+
+      hasilBersih +=
+         HistoryDealGetDouble(tiket, DEAL_PROFIT) +
+         HistoryDealGetDouble(tiket, DEAL_SWAP) +
+         HistoryDealGetDouble(tiket, DEAL_COMMISSION);
+   }
+
+   return hasilBersih;
+}
+
+bool BatasRugiHarianTercapai()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+
+   if(balance <= 0.0)
+      return true;
+
+   double hasilHariIni = HitungKerugianTerealisasiHariIni();
+
+   if(hasilHariIni < 0.0)
+   {
+      Print("Daily Loss Guard: data riwayat gagal dibaca.");
+      return true;
+   }
+
+   double batasRugi = balance * MaxDailyLossPct / 100.0;
+
+   if(hasilHariIni <= -batasRugi)
+   {
+      Print("Daily Loss Guard: batas kerugian harian tercapai.");
+      return true;
+   }
+
+   return false;
+}
+//==================================================
+// MODUL 16: NEWS FILTER
+// MODE AMAN: filter jadwal manual
+//==================================================
+
+input bool AktifkanNewsFilter = true;
+input datetime NewsMulai = 0;
+input datetime NewsSelesai = 0;
+
+bool NewsSedangBerlangsung()
+{
+   if(!AktifkanNewsFilter)
+      return false;
+
+   // Jadwal belum diatur.
+   if(NewsMulai <= 0 || NewsSelesai <= 0)
+      return false;
+
+   if(NewsSelesai <= NewsMulai)
+   {
+      Print("News Filter: jadwal tidak valid.");
+      return true;
+   }
+
+   datetime sekarang = TimeTradeServer();
+
+   if(sekarang <= 0)
+      return true;
+
+   return sekarang >= NewsMulai &&
+          sekarang <= NewsSelesai;
+}
+
+bool NewsFilterBolehLanjut()
+{
+   if(NewsSedangBerlangsung())
+   {
+      Print("News Filter: waktu diblokir.");
+      return false;
+   }
+
+   return true;
+}
+//==================================================
+// MODUL 17: VALIDASI DATA INDIKATOR
+// MODE AMAN: pemeriksaan data saja
+//==================================================
+
+bool ValidasiDataIndikator(ENUM_TIMEFRAMES tf)
+{
+   if(!DataCandleTersedia(tf))
+      return false;
+
+   int handleATR = iATR(InpSymbol, tf, ATRPeriod);
+
+   if(handleATR == INVALID_HANDLE)
+      return false;
+
+   bool valid = false;
+
+   if(BarsCalculated(handleATR) >= ATRPeriod + 2)
+   {
+      double atrBuffer[2];
+
+      if(CopyBuffer(handleATR, 0, 1, 2, atrBuffer) == 2)
+      {
+         valid =
+            atrBuffer[0] > 0.0 &&
+            atrBuffer[1] > 0.0 &&
+            MathIsValidNumber(atrBuffer[0]) &&
+            MathIsValidNumber(atrBuffer[1]);
+      }
+   }
+
+   IndicatorRelease(handleATR);
+
+   if(!valid)
+      Print("Validasi indikator gagal pada timeframe ",
+            EnumToString(tf));
+
+   return valid;
+}
+
+bool ValidasiSemuaTimeframe()
+{
+   if(!ValidasiDataIndikator(PERIOD_M1))  return false;
+   if(!ValidasiDataIndikator(PERIOD_M5))  return false;
+   if(!ValidasiDataIndikator(PERIOD_M15)) return false;
+   if(!ValidasiDataIndikator(PERIOD_H1))  return false;
+   if(!ValidasiDataIndikator(PERIOD_H4))  return false;
+   if(!ValidasiDataIndikator(PERIOD_D1))  return false;
+
+   return true;
+}
+//==================================================
+// MODUL 18: PENGAMAN SPREAD DAN EKSEKUSI
+// MODE AMAN: tidak mengirim order
+//==================================================
+
+input int DeviasiMaksimalPoints = 30;
+
+bool ValidasiEksekusiPasar()
+{
+   if(!ValidasiHargaDanSpread())
+   {
+      Print("Execution Guard: spread atau harga tidak valid.");
+      return false;
+   }
+
+   if(DeviasiMaksimalPoints < 0)
+   {
+      Print("Execution Guard: deviasi tidak valid.");
+      return false;
+   }
+
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+   {
+      Print("Execution Guard: terminal tidak terhubung.");
+      return false;
+   }
+
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+   {
+      Print("Execution Guard: trading EA tidak diizinkan.");
+      return false;
+   }
+
+   return true;
+}
+
+bool ValidasiVolumeOrder(double volume)
+{
+   double minLot = SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_MAX);
+   double stepLot = SymbolInfoDouble(InpSymbol, SYMBOL_VOLUME_STEP);
+
+   if(volume <= 0.0 || minLot <= 0.0 ||
+      maxLot < minLot || stepLot <= 0.0)
+      return false;
+
+   if(volume < minLot || volume > maxLot)
+      return false;
+
+   double langkah = (volume - minLot) / stepLot;
+
+   return MathAbs(langkah - MathRound(langkah)) < 0.000001;
+}
+//==================================================
+// MODUL 19: PEMERIKSAAN POSISI DAN BATAS ENTRY
+// MODE AMAN: tidak membuka atau menutup transaksi
+//==================================================
+
+input int MaxPosisiEA = 8;
+
+int HitungPosisiEA()
+{
+   int total = 0;
+
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong tiket = PositionGetTicket(i);
+
+      if(tiket == 0)
+         continue;
+
+      string simbol = PositionGetString(POSITION_SYMBOL);
+      ulong magic = (ulong)PositionGetInteger(POSITION_MAGIC);
+
+      if(simbol == InpSymbol && magic == MagicNumber)
+         total++;
+   }
+
+   return total;
+}
+
+bool BatasPosisiEAValid()
+{
+   if(MaxPosisiEA < 1)
+      return false;
+
+   int posisiAktif = HitungPosisiEA();
+
+   if(posisiAktif >= MaxPosisiEA)
+   {
+      Print("Position Guard: batas posisi EA tercapai. Jumlah=",
+            posisiAktif);
+      return false;
+   }
+
+   return true;
+}
+//==================================================
+// MODUL 20: PROFIT LOCK GUARD
+// MODE AMAN: pemantauan saja
+//==================================================
+
+input bool AktifkanProfitLock = true;
+input double ProfitLockAktifUSD = 10.0;
+input double ProfitLockMundurUSD = 3.0;
+
+double PuncakEkuitasEA = 0.0;
+bool ProfitLockTerpicu = false;
+
+void PerbaruiProfitLock()
+{
+   if(!AktifkanProfitLock)
+      return;
+
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   if(equity <= 0.0)
+      return;
+
+   if(PuncakEkuitasEA <= 0.0)
+      PuncakEkuitasEA = equity;
+
+   if(equity > PuncakEkuitasEA)
+      PuncakEkuitasEA = equity;
+
+   double kenaikan = equity -
+                     AccountInfoDouble(ACCOUNT_BALANCE);
+
+   if(kenaikan >= ProfitLockAktifUSD &&
+      PuncakEkuitasEA - equity >= ProfitLockMundurUSD)
+   {
+      ProfitLockTerpicu = true;
+
+      Print("Profit Lock terpicu. Pemantauan saja; ",
+            "tidak ada posisi yang ditutup otomatis.");
+   }
+}
+
+bool ProfitLockBolehLanjut()
+{
+   PerbaruiProfitLock();
+
+   return !ProfitLockTerpicu;
+}
+//==================================================
+// MODUL 21: SAFETY GATE
+// MODE AMAN: tidak membuka transaksi
+//==================================================
+
+bool SafetyGateLolos()
+{
+   if(!ValidasiHargaDanSpread())
+      return false;
+
+   if(!DataCandleTersedia(PERIOD_M1) ||
+      !DataCandleTersedia(PERIOD_M5) ||
+      !DataCandleTersedia(PERIOD_M15) ||
+      !DataCandleTersedia(PERIOD_H1) ||
+      !DataCandleTersedia(PERIOD_H4) ||
+      !DataCandleTersedia(PERIOD_D1))
+      return false;
+
+   if(!ValidasiSemuaTimeframe())
+      return false;
+
+   if(!RiskGuardianBolehLanjut())
+      return false;
+
+   if(BatasRugiHarianTercapai())
+      return false;
+
+   if(!NewsFilterBolehLanjut())
+      return false;
+
+   if(!ValidasiEksekusiPasar())
+      return false;
+
+   if(!BatasPosisiEAValid())
+      return false;
+
+   if(!ProfitLockBolehLanjut())
+      return false;
+
+   return true;
+}
