@@ -824,3 +824,27 @@ Print("APlus V4.16 | simbol=", InpSymbol,
 " | SELL filter=", sellValidasi,
 " | mode aman aktif.");
 }
+//==================================================
+// MODUL 12: FILTER KONFIRMASI M1
+// MODE AMAN: hanya memeriksa sinyal
+//==================================================
+
+bool KonfirmasiM1(bool bullish)
+{
+   if(!DataCandleTersedia(PERIOD_M1))
+      return false;
+
+   double open1  = iOpen(InpSymbol, PERIOD_M1, 1);
+   double close1 = iClose(InpSymbol, PERIOD_M1, 1);
+   double high1  = iHigh(InpSymbol, PERIOD_M1, 1);
+   double low1   = iLow(InpSymbol, PERIOD_M1, 1);
+
+   if(open1 <= 0 || close1 <= 0 ||
+      high1 <= low1)
+      return false;
+
+   if(bullish)
+      return close1 > open1;
+
+   return close1 < open1;
+}
