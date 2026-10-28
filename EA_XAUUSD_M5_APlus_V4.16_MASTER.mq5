@@ -74,7 +74,113 @@ double batasAtas;
 double ce50;
 datetime waktu;
 };
+//==================================================
+// ZONE REGISTRY V4.16.1
+// MODE AMAN: tidak membuka transaksi
+//==================================================
 
+#define MAX_ZONA_REGISTRY 100
+
+DataZona RegistryZona[MAX_ZONA_REGISTRY];
+int JumlahZonaRegistry = 0;
+
+bool ZonaRegistryValid(DataZona &zona)
+{
+   if(!zona.valid) return false;
+   if(zona.batasBawah <= 0.0) return false;
+   if(zona.batasAtas <= zona.batasBawah) return false;
+   if(zona.ce50 < zona.batasBawah ||
+      zona.ce50 > zona.batasAtas) return false;
+   if(zona.waktu <= 0) return false;
+
+   if(zona.kategori != ZONA_SUPER &&
+      zona.kategori != ZONA_BIASA &&
+      zona.kategori != ZONA_RETEST)
+      return false;
+
+   return true;
+}
+
+int CariZonaRegistry(DataZona &zona, double toleransiHarga)
+{
+   if(toleransiHarga < 0.0) return -1;
+
+   for(int i = 0; i < JumlahZonaRegistry; i++)
+   {
+      if(!RegistryZona[i].valid) continue;
+      if(RegistryZona[i].bullish != zona.bullish) continue;
+      if(RegistryZona[i].kategori != zona.kategori) continue;
+      if(RegistryZona[i].waktu != zona.waktu) continue;
+
+      if(MathAbs(RegistryZona[i].batasBawah -
+                 zona.batasBawah) > toleransiHarga)
+         continue;
+
+      if(MathAbs(RegistryZona[i].batasAtas -
+                 zona.batasAtas) > toleransiHarga)
+         continue;
+
+      return i;
+   }
+
+   return -1;
+}
+
+bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga)
+{
+   if(!ZonaRegistryValid(zona))
+   {
+      Print("Zone Registry: zona tidak valid.");
+      return false;
+   }
+
+   int indeks = CariZonaRegistry(zona, toleransiHarga);
+
+   if(indeks >= 0)
+   {
+      RegistryZona[indeks] = zona;
+      return true;
+   }
+
+   if(JumlahZonaRegistry >= MAX_ZONA_REGISTRY)
+   {
+      Print("Zone Registry penuh.");
+      return false;
+   }
+
+   RegistryZona[JumlahZonaRegistry] = zona;
+   JumlahZonaRegistry++;
+
+   Print("Zone Registry: zona disimpan. Total=",
+         JumlahZonaRegistry);
+
+   return true;
+}
+
+bool NonaktifkanZonaRegistry(int indeks)
+{
+   if(indeks < 0 || indeks >= JumlahZonaRegistry)
+      return false;
+
+   RegistryZona[indeks].valid = false;
+   return true;
+}
+
+int HitungZonaAktif(KategoriZona kategori, bool bullish)
+{
+   int total = 0;
+
+   for(int i = 0; i < JumlahZonaRegistry; i++)
+   {
+      if(!RegistryZona[i].valid) continue;
+      if(RegistryZona[i].kategori != kategori) continue;
+      if(RegistryZona[i].bullish != bullish) continue;
+
+      total++;
+   }
+
+   return total;
+}
 //--------------------------------------------------
 // INISIALISASI DAN PEMBERSIHAN
 //--------------------------------------------------
