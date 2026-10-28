@@ -502,42 +502,53 @@ zona.ce50 = 0;
 if(Bars(InpSymbol, tf) < 10)
 return zona;
 
+// Tiga candle tertutup untuk deteksi FVG.
 double high3 = iHigh(InpSymbol, tf, 3);
-double low3 = iLow(InpSymbol, tf, 3);
+double low3  = iLow(InpSymbol, tf, 3);
+double high2 = iHigh(InpSymbol, tf, 2);
+double low2  = iLow(InpSymbol, tf, 2);
 double high1 = iHigh(InpSymbol, tf, 1);
-double low1 = iLow(InpSymbol, tf, 1);
+double low1  = iLow(InpSymbol, tf, 1);
 
-if(high3 <= 0 || low3 <= 0 ||
-high1 <= 0 || low1 <= 0)
-return zona;
+if(high2 <= 0.0 || low2 <= 0.0)
+   return zona;
 
+if(high3 <= 0.0 || low3 <= 0.0 ||
+   high2 <= 0.0 || low2 <= 0.0 ||
+   high1 <= 0.0 || low1 <= 0.0)
+{
+   zona.valid = false;
+   return zona;
+}
+// FVG bullish: low candle 1 di atas high candle 3.
 if(low1 > high3)
 {
-zona.valid = true;
-zona.bullish = true;
-zona.batasBawah = high3;
-zona.batasAtas = low1;
+   zona.batasBawah = high3;
+   zona.batasAtas = low1;
+   zona.bullish = true;
+   zona.valid = true;
 }
+// FVG bearish: high candle 1 di bawah low candle 3.
 else if(high1 < low3)
 {
-zona.valid = true;
-zona.bullish = false;
-zona.batasBawah = high1;
-zona.batasAtas = low3;
+   zona.batasBawah = high1;
+   zona.batasAtas = low3;
+   zona.bullish = false;
+   zona.valid = true;
 }
 
 if(zona.valid)
 {
 double atr = AmbilATR(tf);
 
-if(atr <= 0 ||  
-     zona.batasAtas - zona.batasBawah <  
-     atr * MinFVG_ATR)  
-  {  
-     zona.valid = false;  
-     return zona;  
-  }  
-
+if(atr <= 0.0 ||
+   zona.batasAtas <= zona.batasBawah ||
+   zona.batasAtas - zona.batasBawah <
+   atr * MinFVG_ATR)
+{
+   zona.valid = false;
+   return zona;
+}
   zona.ce50 =  
      (zona.batasBawah + zona.batasAtas) / 2.0;
 
@@ -746,12 +757,10 @@ bool ValidasiSinyalDasar(bool bullish)
    !fvgSearah || !ob.valid || !bias)
    return false;
 
-int shiftZona = iBarShift(
-   InpSymbol,
-   InpEntryTF,
-   iTime(InpSymbol, InpEntryTF, 1),
-   true
-);
+int shiftZona = 3;
+
+if(Bars(InpSymbol, InpEntryTF) <= shiftZona + 1)
+   return false;
 
 if(shiftZona < 1)
    return false;
