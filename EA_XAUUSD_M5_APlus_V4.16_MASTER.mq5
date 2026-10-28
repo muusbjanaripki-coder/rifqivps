@@ -1325,8 +1325,8 @@ bool SafetyGateLolos()
    if(!NewsFilterBolehLanjut())
       return false;
 
-   if(!ValidasiEksekusiPasar())
-      return false;
+   if(!TerminalInfoInteger(TERMINAL_CONNECTED))
+   return false;
 
    if(!BatasPosisiEAValid())
       return false;
