@@ -794,36 +794,36 @@ bool ValidasiSinyalDasar(bool bullish)
 
 void OnTick()
 {
-// Mode aman: fungsi ini tidak pernah mengirim order.
-if(!ValidasiHargaDanSpread())
-return;
+   // MODE AMAN: tidak membuka atau menutup transaksi.
 
-if(!DataCandleTersedia(PERIOD_M1) ||
-!DataCandleTersedia(PERIOD_M5) ||
-!DataCandleTersedia(PERIOD_M15) ||
-!DataCandleTersedia(PERIOD_H1) ||
-!DataCandleTersedia(PERIOD_H4) ||
-!DataCandleTersedia(PERIOD_D1))
-return;
+   if(!SafetyGateLolos())
+      return;
 
-if(!ValidasiATR())
-return;
+   if(!ValidasiATR())
+      return;
 
-datetime barTime = iTime(InpSymbol, InpEntryTF, 0);
+   datetime barTime = iTime(InpSymbol, InpEntryTF, 0);
 
-if(barTime <= 0 || barTime == lastBarTime)
-return;
+   if(barTime <= 0 || barTime == lastBarTime)
+      return;
 
-lastBarTime = barTime;
+   lastBarTime = barTime;
 
-bool buyValidasi = ValidasiSinyalDasar(true);
-bool sellValidasi = ValidasiSinyalDasar(false);
+   bool buyValidasi =
+      ValidasiSinyalDasar(true) &&
+      KonfirmasiM1(true);
 
-Print("APlus V4.16 | simbol=", InpSymbol,
-" | BUY filter=", buyValidasi,
-" | SELL filter=", sellValidasi,
-" | mode aman aktif.");
+   bool sellValidasi =
+      ValidasiSinyalDasar(false) &&
+      KonfirmasiM1(false);
+
+   Print("APlus V4.16 MASTER",
+         " | BUY=", buyValidasi,
+         " | SELL=", sellValidasi,
+         " | Posisi EA=", HitungPosisiEA(),
+         " | Mode aman aktif.");
 }
+
 //==================================================
 // MODUL 12: FILTER KONFIRMASI M1
 // MODE AMAN: hanya memeriksa sinyal
@@ -848,6 +848,7 @@ bool KonfirmasiM1(bool bullish)
 
    return close1 < open1;
 }
+
 //==================================================
 // MODUL 13: TARGET TP ZONA SEJENIS
 // MODE AMAN: menghitung target saja, tidak membuka order
@@ -908,6 +909,7 @@ bool CariTargetZonaSejenis(
    zonaTarget = RegistryZona[indeksTerbaik];
    return true;
 }
+
 //==================================================
 // MODUL 14: RISK GUARDIAN
 // MODE AMAN: pemantauan risiko, tanpa transaksi otomatis
@@ -968,6 +970,7 @@ bool RiskGuardianBolehLanjut()
 
    return true;
 }
+
 //==================================================
 // MODUL 15: DAILY LOSS GUARD
 // MODE AMAN: pemantauan saja
@@ -1048,6 +1051,7 @@ bool BatasRugiHarianTercapai()
 
    return false;
 }
+
 //==================================================
 // MODUL 16: NEWS FILTER
 // MODE AMAN: filter jadwal manual
@@ -1091,6 +1095,7 @@ bool NewsFilterBolehLanjut()
 
    return true;
 }
+
 //==================================================
 // MODUL 17: VALIDASI DATA INDIKATOR
 // MODE AMAN: pemeriksaan data saja
@@ -1142,6 +1147,7 @@ bool ValidasiSemuaTimeframe()
 
    return true;
 }
+
 //==================================================
 // MODUL 18: PENGAMAN SPREAD DAN EKSEKUSI
 // MODE AMAN: tidak mengirim order
@@ -1195,6 +1201,7 @@ bool ValidasiVolumeOrder(double volume)
 
    return MathAbs(langkah - MathRound(langkah)) < 0.000001;
 }
+
 //==================================================
 // MODUL 19: PEMERIKSAAN POSISI DAN BATAS ENTRY
 // MODE AMAN: tidak membuka atau menutup transaksi
@@ -1239,6 +1246,7 @@ bool BatasPosisiEAValid()
 
    return true;
 }
+
 //==================================================
 // MODUL 20: PROFIT LOCK GUARD
 // MODE AMAN: pemantauan saja
@@ -1286,6 +1294,7 @@ bool ProfitLockBolehLanjut()
 
    return !ProfitLockTerpicu;
 }
+
 //==================================================
 // MODUL 21: SAFETY GATE
 // MODE AMAN: tidak membuka transaksi
