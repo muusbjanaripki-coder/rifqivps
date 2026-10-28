@@ -731,28 +731,61 @@ return ZONA_RETEST;
 
 bool ValidasiSinyalDasar(bool bullish)
 {
-bool sweep = bullish
-? DeteksiSweepLow(InpEntryTF)
-: DeteksiSweepHigh(InpEntryTF);
+   bool sweep = bullish
+      ? DeteksiSweepLow(InpEntryTF)
+      : DeteksiSweepHigh(InpEntryTF);
 
-bool displacement =
-DeteksiDisplacement(InpEntryTF, bullish);
+   bool displacement =
+      DeteksiDisplacement(InpEntryTF, bullish);
 
-bool mss = DeteksiMSS(InpEntryTF, bullish);
+   bool mss = DeteksiMSS(InpEntryTF, bullish);
 
-ZonaFVG fvg = DeteksiFVG(InpEntryTF);
-ZonaOB ob = DeteksiOB(InpEntryTF, bullish);
+   ZonaFVG fvg = DeteksiFVG(InpEntryTF);
+   ZonaOB ob = DeteksiOB(InpEntryTF, bullish);
 
-bool fvgSearah = fvg.valid && fvg.bullish == bullish;
+   bool fvgSearah =
+      fvg.valid && fvg.bullish == bullish;
 
-bool bias = KonfirmasiBiasMTF(bullish);
+   bool bias = KonfirmasiBiasMTF(bullish);
 
-return sweep &&
-displacement &&
-mss &&
-fvgSearah &&
-ob.valid &&
-bias;
+   if(!sweep || !displacement || !mss ||
+      !fvgSearah || !ob.valid || !bias)
+      return false;
+
+   // Bentuk data zona dari FVG yang tervalidasi.
+   DataZona zona;
+
+   zona.valid = true;
+   zona.bullish = bullish;
+   zona.batasBawah = fvg.batasBawah;
+   zona.batasAtas = fvg.batasAtas;
+   zona.ce50 = fvg.ce50;
+   zona.waktu = iTime(InpSymbol, InpEntryTF, 1);
+
+   zona.kategori = KlasifikasiZona(
+      sweep,
+      displacement,
+      mss,
+      fvgSearah,
+      ob.valid
+   );
+
+   // Simpan zona dan cegah duplikasi.
+   double toleransi =
+      SymbolInfoDouble(InpSymbol, SYMBOL_POINT) * 2.0;
+
+   bool tersimpan =
+      SimpanZonaRegistry(zona, toleransi);
+
+   if(!tersimpan)
+      return false;
+
+   Print("Zona tervalidasi dan diregistrasi. Kategori=",
+         (int)zona.kategori,
+         " | arah=",
+         bullish ? "BUY" : "SELL");
+
+   return true;
 }
 
 //--------------------------------------------------
