@@ -87,58 +87,171 @@ DataZona RegistryZona[MAX_ZONA_REGISTRY];
 int JumlahZonaRegistry = 0;
 
 //--------------------------------------------------
-// REGISTRY ZONA
+// REGISTRY ZONA — REVISI
 //--------------------------------------------------
-bool ZonaRegistryValid(DataZona &zona) {
-   if(!zona.valid || zona.batasBawah <= 0.0 ||
+bool ZonaRegistryValid(DataZona &zona)
+{
+   if(!zona.valid)
+      return false;
+
+   if(!MathIsValidNumber(zona.batasBawah) ||
+      !MathIsValidNumber(zona.batasAtas) ||
+      !MathIsValidNumber(zona.ce50))
+      return false;
+
+   if(zona.batasBawah <= 0.0 ||
       zona.batasAtas <= zona.batasBawah ||
-      zona.ce50 < zona.batasBawah || zona.ce50 > zona.batasAtas ||
-      zona.waktu <= 0) return false;
-   if(zona.kategori != ZONA_SUPER && zona.kategori != ZONA_BIASA &&
-      zona.kategori != ZONA_RETEST) return false;
+      zona.ce50 < zona.batasBawah ||
+      zona.ce50 > zona.batasAtas ||
+      zona.waktu <= 0)
+      return false;
+
+   if(zona.kategori != ZONA_SUPER &&
+      zona.kategori != ZONA_BIASA &&
+      zona.kategori != ZONA_RETEST)
+      return false;
+
    return true;
 }
 
-int CariZonaRegistry(DataZona &zona, double toleransiHarga) {
-   if(toleransiHarga < 0.0) return -1;
-   for(int i=0; i<JumlahZonaRegistry; i++) {
-      if(!RegistryZona[i].valid ||
-         RegistryZona[i].bullish != zona.bullish ||
+//--------------------------------------------------
+// CARI ZONA YANG SAMA
+//--------------------------------------------------
+int CariZonaRegistry(DataZona &zona, double toleransiHarga)
+{
+   if(!MathIsValidNumber(toleransiHarga) ||
+      toleransiHarga < 0.0)
+      return -1;
+
+   for(int i = 0; i < JumlahZonaRegistry; i++)
+   {
+      if(!RegistryZona[i].valid)
+         continue;
+
+      if(RegistryZona[i].bullish != zona.bullish ||
          RegistryZona[i].kategori != zona.kategori ||
-         RegistryZona[i].waktu != zona.waktu) continue;
-      if(MathAbs(RegistryZona[i].batasBawah-zona.batasBawah)>toleransiHarga) continue;
-      if(MathAbs(RegistryZona[i].batasAtas-zona.batasAtas)>toleransiHarga) continue;
+         RegistryZona[i].waktu != zona.waktu)
+         continue;
+
+      if(MathAbs(RegistryZona[i].batasBawah -
+                 zona.batasBawah) > toleransiHarga)
+         continue;
+
+      if(MathAbs(RegistryZona[i].batasAtas -
+                 zona.batasAtas) > toleransiHarga)
+         continue;
+
       return i;
    }
+
    return -1;
 }
 
-bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga) {
-   if(!ZonaRegistryValid(zona)) {
+//--------------------------------------------------
+// CARI SLOT KOSONG
+//--------------------------------------------------
+int CariSlotKosongRegistry()
+{
+   for(int i = 0; i < JumlahZonaRegistry; i++)
+   {
+      if(!RegistryZona[i].valid)
+         return i;
+   }
+
+   return -1;
+}
+
+//--------------------------------------------------
+// SIMPAN ATAU PERBARUI ZONA
+//--------------------------------------------------
+bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga)
+{
+   if(!ZonaRegistryValid(zona))
+   {
       Print("Zone Registry: zona tidak valid.");
       return false;
    }
-   int idx=CariZonaRegistry(zona,toleransiHarga);
-   if(idx>=0) { RegistryZona[idx]=zona; return true; }
-   if(JumlahZonaRegistry>=MAX_ZONA_REGISTRY) {
-      Print("Zone Registry penuh."); return false;
+
+   if(!MathIsValidNumber(toleransiHarga) ||
+      toleransiHarga < 0.0)
+   {
+      Print("Zone Registry: toleransi harga tidak valid.");
+      return false;
    }
-   RegistryZona[JumlahZonaRegistry++]=zona;
-   Print("Zone Registry: zona disimpan. Total=",JumlahZonaRegistry);
+
+   int idx = CariZonaRegistry(zona, toleransiHarga);
+
+   if(idx >= 0)
+   {
+      RegistryZona[idx] = zona;
+      Print("Zone Registry: zona diperbarui. Index=", idx);
+      return true;
+   }
+
+   // Gunakan slot tidak aktif terlebih dahulu.
+   int slot = CariSlotKosongRegistry();
+
+   if(slot >= 0)
+   {
+      RegistryZona[slot] = zona;
+      Print("Zone Registry: slot digunakan kembali. Index=", slot);
+      return true;
+   }
+
+   if(JumlahZonaRegistry >= MAX_ZONA_REGISTRY)
+   {
+      Print("Zone Registry penuh. Zona baru ditolak.");
+      return false;
+   }
+
+   RegistryZona[JumlahZonaRegistry] = zona;
+   JumlahZonaRegistry++;
+
+   Print("Zone Registry: zona baru disimpan. Total=",
+         JumlahZonaRegistry);
+
    return true;
 }
 
-bool NonaktifkanZonaRegistry(int indeks) {
-   if(indeks<0 || indeks>=JumlahZonaRegistry) return false;
-   RegistryZona[indeks].valid=false;
+//--------------------------------------------------
+// NONAKTIFKAN ZONA
+//--------------------------------------------------
+bool NonaktifkanZonaRegistry(int indeks)
+{
+   if(indeks < 0 || indeks >= JumlahZonaRegistry)
+      return false;
+
+   if(!RegistryZona[indeks].valid)
+      return true;
+
+   RegistryZona[indeks].valid = false;
+
+   Print("Zone Registry: zona dinonaktifkan. Index=", indeks);
    return true;
 }
 
-int HitungZonaAktif(KategoriZona kategori, bool bullish) {
-   int total=0;
-   for(int i=0;i<JumlahZonaRegistry;i++)
-      if(RegistryZona[i].valid && RegistryZona[i].kategori==kategori &&
-         RegistryZona[i].bullish==bullish) total++;
+//--------------------------------------------------
+// HITUNG ZONA AKTIF
+//--------------------------------------------------
+int HitungZonaAktif(KategoriZona kategori, bool bullish)
+{
+   int total = 0;
+
+   for(int i = 0; i < JumlahZonaRegistry; i++)
+   {
+      if(!RegistryZona[i].valid)
+         continue;
+
+      if(RegistryZona[i].kategori != kategori ||
+         RegistryZona[i].bullish != bullish)
+         continue;
+
+      if(!ZonaRegistryValid(RegistryZona[i]))
+         continue;
+
+      total++;
+   }
+
    return total;
 }
 
