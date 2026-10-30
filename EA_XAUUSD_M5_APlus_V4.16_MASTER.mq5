@@ -14,9 +14,9 @@ input string InpSymbol = "XAUUSD"; // Base name; runtime resolver accepts valida
 string SymbolKerja = "";
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
 
-input double RiskNormalPct = 0.35;
-input double RiskSuperPct = 0.50;
-input double DailyLossLimitPct = 4.0;
+input double RiskNormalPct = 0.35; // konfigurasi; lot berbasis SL belum diaktifkan pada SAFE build
+input double RiskSuperPct = 0.50; // konfigurasi; lot berbasis SL belum diaktifkan pada SAFE build
+input double DailyLossLimitPct = 4.0; // parameter kompatibilitas; guard aktif memakai MaxDailyLossPct
 
 input int MaxSuper = 8;
 input int MaxBiasa = 5;
@@ -469,7 +469,8 @@ bool ZonaMasihLayak(ENUM_TIMEFRAMES tf,bool bullish,double bawah,double atas,int
 int BatasEntryKategori(KategoriZona k) {
    if(k==ZONA_SUPER) return MaxSuper;
    if(k==ZONA_BIASA) return MaxBiasa;
-   return MaxRetest;
+   if(k==ZONA_RETEST) return MaxRetest;
+   return 0;
 }
 KategoriZona KlasifikasiZona(bool sweep,bool displacement,bool mss,bool fvg,bool ob) {
    int score=0;
@@ -490,17 +491,25 @@ bool ValidasiSinyalDasar(bool bullish) {
    ZonaOB ob=DeteksiOB(InpEntryTF,bullish);
    bool fvgSearah=fvg.valid && fvg.bullish==bullish;
    bool bias=KonfirmasiBiasMTF(bullish);
-   if(!sweep || !displacement || !mss || !fvgSearah || !ob.valid || !bias) return false;
-   // FVG dihasilkan dari candle 3 dan 1; validasi mitigasi dari pembentukan zona.
-   // Zona FVG baru dicatat sebagai kandidat; mitigasi final harus dipantau pada bar tertutup berikutnya.
+
+   // Syarat inti: sweep + MSS + bias MTF + FVG searah.
+   // Displacement dan OB menjadi penguat kualitas agar kategori tidak selalu Super.
+   if(!sweep || !mss || !fvgSearah || !bias) return false;
+
+   // FVG tiga candle berpusat pada candle shift 2. Pastikan belum tersentuh
+   // atau tertutup invalidasi oleh candle tertutup setelah pembentukannya.
+   if(!ZonaMasihLayak(InpEntryTF,bullish,fvg.batasBawah,fvg.batasAtas,2)) return false;
+
    DataZona z;
    z.valid=true; z.bullish=bullish; z.batasBawah=fvg.batasBawah;
    z.batasAtas=fvg.batasAtas; z.ce50=fvg.ce50;
-   z.waktu=iTime(SymbolKerja,InpEntryTF,1);
+   z.waktu=iTime(SymbolKerja,InpEntryTF,2);
    z.kategori=KlasifikasiZona(sweep,displacement,mss,fvgSearah,ob.valid);
    double point=SymbolInfoDouble(SymbolKerja,SYMBOL_POINT);
-   if(point<=0 || !SimpanZonaRegistry(z,point*2.0)) return false;
+   if(z.waktu<=0 || point<=0 || !SimpanZonaRegistry(z,point*2.0)) return false;
    Print("Zona tervalidasi dan diregistrasi. Kategori=",(int)z.kategori,
+         " | sweep=",sweep," | displacement=",displacement,
+         " | MSS=",mss," | FVG=",fvgSearah," | OB=",ob.valid,
          " | arah=",bullish ? "BUY" : "SELL");
    return true;
 }
