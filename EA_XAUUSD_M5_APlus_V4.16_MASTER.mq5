@@ -1,16 +1,17 @@
 #property strict
-#property version "4.16"
+#property version "4.161"
 #property description "APlus V4.16 MASTER - safe monitoring build; does not send or close orders"
 
 #include <Trade/Trade.mqh>
 CTrade trade;
 
 //==================================================
-// EA XAUUSD M5 APLUS V4.16 MASTER
+// EA XAUUSD M5 APLUS V4.16 MASTER REPAIR CANDIDATE
 // MODE AMAN: TIDAK MEMBUKA / MENUTUP TRANSAKSI
 //==================================================
 
-input string InpSymbol = "XAUUSD";
+input string InpSymbol = "XAUUSD"; // Base name; runtime resolver accepts validated XAUUSD suffixes
+string SymbolKerja = "";
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
 
 input double RiskNormalPct = 0.35;
@@ -35,7 +36,7 @@ input double MinFVG_ATR = 0.10;
 input double MaxRiskPerBasketPct = 0.50;
 input double MaxDailyLossPct = 4.0;
 
-input bool AktifkanNewsFilter = true;
+input bool AktifkanNewsFilter = false; // manual schedule only; enable only after configuring times
 input datetime NewsMulai = 0;
 input datetime NewsSelesai = 0;
 
@@ -53,6 +54,11 @@ datetime HariTercatat = 0;
 double PuncakEkuitasEA = 0.0;
 double EkuitasAwalProfitLock = 0.0;
 bool ProfitLockTerpicu = false;
+double MetrikAwalHariEA = 0.0;
+double PuncakMetrikHariEA = 0.0;
+bool DailyLossTerpicu = false;
+string GVPrefix = "";
+bool StatePersistenceOK = false;
 
 enum KategoriZona { ZONA_SUPER = 0, ZONA_BIASA = 1, ZONA_RETEST = 2 };
 
@@ -87,173 +93,127 @@ DataZona RegistryZona[MAX_ZONA_REGISTRY];
 int JumlahZonaRegistry = 0;
 
 //--------------------------------------------------
-// REGISTRY ZONA — REVISI
+// REGISTRY ZONA
 //--------------------------------------------------
-bool ZonaRegistryValid(DataZona &zona)
-{
-   if(!zona.valid)
-      return false;
-
-   if(!MathIsValidNumber(zona.batasBawah) ||
-      !MathIsValidNumber(zona.batasAtas) ||
-      !MathIsValidNumber(zona.ce50))
-      return false;
-
-   if(zona.batasBawah <= 0.0 ||
+bool ZonaRegistryValid(DataZona &zona) {
+   if(!zona.valid || zona.batasBawah <= 0.0 ||
       zona.batasAtas <= zona.batasBawah ||
-      zona.ce50 < zona.batasBawah ||
-      zona.ce50 > zona.batasAtas ||
-      zona.waktu <= 0)
-      return false;
-
-   if(zona.kategori != ZONA_SUPER &&
-      zona.kategori != ZONA_BIASA &&
-      zona.kategori != ZONA_RETEST)
-      return false;
-
+      zona.ce50 < zona.batasBawah || zona.ce50 > zona.batasAtas ||
+      zona.waktu <= 0) return false;
+   if(zona.kategori != ZONA_SUPER && zona.kategori != ZONA_BIASA &&
+      zona.kategori != ZONA_RETEST) return false;
    return true;
 }
 
-//--------------------------------------------------
-// CARI ZONA YANG SAMA
-//--------------------------------------------------
-int CariZonaRegistry(DataZona &zona, double toleransiHarga)
-{
-   if(!MathIsValidNumber(toleransiHarga) ||
-      toleransiHarga < 0.0)
-      return -1;
-
-   for(int i = 0; i < JumlahZonaRegistry; i++)
-   {
-      if(!RegistryZona[i].valid)
-         continue;
-
-      if(RegistryZona[i].bullish != zona.bullish ||
+int CariZonaRegistry(DataZona &zona, double toleransiHarga) {
+   if(toleransiHarga < 0.0 || !ZonaRegistryValid(zona)) return -1;
+   int batas=MathMin(JumlahZonaRegistry,MAX_ZONA_REGISTRY);
+   for(int i=0; i<batas; i++) {
+      if(!RegistryZona[i].valid ||
+         RegistryZona[i].bullish != zona.bullish ||
          RegistryZona[i].kategori != zona.kategori ||
-         RegistryZona[i].waktu != zona.waktu)
-         continue;
-
-      if(MathAbs(RegistryZona[i].batasBawah -
-                 zona.batasBawah) > toleransiHarga)
-         continue;
-
-      if(MathAbs(RegistryZona[i].batasAtas -
-                 zona.batasAtas) > toleransiHarga)
-         continue;
-
+         RegistryZona[i].waktu != zona.waktu) continue;
+      if(MathAbs(RegistryZona[i].batasBawah-zona.batasBawah)>toleransiHarga) continue;
+      if(MathAbs(RegistryZona[i].batasAtas-zona.batasAtas)>toleransiHarga) continue;
       return i;
    }
-
    return -1;
 }
 
-//--------------------------------------------------
-// CARI SLOT KOSONG
-//--------------------------------------------------
-int CariSlotKosongRegistry()
-{
-   for(int i = 0; i < JumlahZonaRegistry; i++)
-   {
-      if(!RegistryZona[i].valid)
-         return i;
+int CariSlotKosongRegistry() {
+   // Cari slot invalid lebih dahulu agar registry tidak cepat penuh.
+   int batas=MathMin(JumlahZonaRegistry,MAX_ZONA_REGISTRY);
+   for(int i=0; i<batas; i++) {
+      if(!RegistryZona[i].valid) return i;
    }
-
+   // Jika belum pernah dipakai, gunakan indeks berikutnya.
+   if(JumlahZonaRegistry>=0 && JumlahZonaRegistry<MAX_ZONA_REGISTRY)
+      return JumlahZonaRegistry;
    return -1;
 }
 
-//--------------------------------------------------
-// SIMPAN ATAU PERBARUI ZONA
-//--------------------------------------------------
-bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga)
-{
-   if(!ZonaRegistryValid(zona))
-   {
+bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga) {
+   if(!ZonaRegistryValid(zona)) {
       Print("Zone Registry: zona tidak valid.");
       return false;
    }
-
-   if(!MathIsValidNumber(toleransiHarga) ||
-      toleransiHarga < 0.0)
-   {
-      Print("Zone Registry: toleransi harga tidak valid.");
+   int idx=CariZonaRegistry(zona,toleransiHarga);
+   if(idx>=0) { RegistryZona[idx]=zona; return true; }
+   idx=CariSlotKosongRegistry();
+   if(idx<0) {
+      Print("Zone Registry penuh: tidak ada slot kosong.");
       return false;
    }
-
-   int idx = CariZonaRegistry(zona, toleransiHarga);
-
-   if(idx >= 0)
-   {
-      RegistryZona[idx] = zona;
-      Print("Zone Registry: zona diperbarui. Index=", idx);
-      return true;
-   }
-
-   // Gunakan slot tidak aktif terlebih dahulu.
-   int slot = CariSlotKosongRegistry();
-
-   if(slot >= 0)
-   {
-      RegistryZona[slot] = zona;
-      Print("Zone Registry: slot digunakan kembali. Index=", slot);
-      return true;
-   }
-
-   if(JumlahZonaRegistry >= MAX_ZONA_REGISTRY)
-   {
-      Print("Zone Registry penuh. Zona baru ditolak.");
-      return false;
-   }
-
-   RegistryZona[JumlahZonaRegistry] = zona;
-   JumlahZonaRegistry++;
-
-   Print("Zone Registry: zona baru disimpan. Total=",
-         JumlahZonaRegistry);
-
+   RegistryZona[idx]=zona;
+   if(idx==JumlahZonaRegistry) JumlahZonaRegistry++;
+   Print("Zone Registry: zona disimpan pada slot ",idx,". Total slot terpakai=",JumlahZonaRegistry);
    return true;
 }
 
-//--------------------------------------------------
-// NONAKTIFKAN ZONA
-//--------------------------------------------------
-bool NonaktifkanZonaRegistry(int indeks)
-{
-   if(indeks < 0 || indeks >= JumlahZonaRegistry)
-      return false;
-
-   if(!RegistryZona[indeks].valid)
-      return true;
-
-   RegistryZona[indeks].valid = false;
-
-   Print("Zone Registry: zona dinonaktifkan. Index=", indeks);
+bool NonaktifkanZonaRegistry(int indeks) {
+   if(indeks<0 || indeks>=JumlahZonaRegistry || indeks>=MAX_ZONA_REGISTRY) return false;
+   RegistryZona[indeks].valid=false;
    return true;
 }
 
-//--------------------------------------------------
-// HITUNG ZONA AKTIF
-//--------------------------------------------------
-int HitungZonaAktif(KategoriZona kategori, bool bullish)
-{
-   int total = 0;
-
-   for(int i = 0; i < JumlahZonaRegistry; i++)
-   {
-      if(!RegistryZona[i].valid)
-         continue;
-
-      if(RegistryZona[i].kategori != kategori ||
-         RegistryZona[i].bullish != bullish)
-         continue;
-
-      if(!ZonaRegistryValid(RegistryZona[i]))
-         continue;
-
-      total++;
-   }
-
+int HitungZonaAktif(KategoriZona kategori, bool bullish) {
+   int total=0;
+   int batas=MathMin(JumlahZonaRegistry,MAX_ZONA_REGISTRY);
+   for(int i=0;i<batas;i++)
+      if(RegistryZona[i].valid && RegistryZona[i].kategori==kategori &&
+         RegistryZona[i].bullish==bullish) total++;
    return total;
 }
+
+//--------------------------------------------------
+// SYMBOL RESOLVER: base XAUUSD + suffix terkontrol
+//--------------------------------------------------
+bool AkhiranSimbolDiizinkan(string suffix)
+{
+   if(suffix=="") return true;
+   string allowed[] = {"c","m",".pro",".raw",".ecn",".a",".i","_pro","-pro"};
+   string low=suffix; StringToLower(low);
+   for(int i=0;i<ArraySize(allowed);i++) if(low==allowed[i]) return true;
+   return false;
+}
+string CariSimbolKerja()
+{
+   string base=InpSymbol; StringToUpper(base);
+   if(base!="XAUUSD") return "";
+   string chart=_Symbol; string upper=chart; StringToUpper(upper);
+   if(StringFind(upper,"XAUUSD")==0 && AkhiranSimbolDiizinkan(StringSubstr(chart,6)) &&
+      SymbolSelect(chart,true)) return chart;
+   if(SymbolSelect(InpSymbol,true)) return InpSymbol;
+   int total=SymbolsTotal(false);
+   for(int i=0;i<total;i++) {
+      string candidate=SymbolName(i,false); string u=candidate; StringToUpper(u);
+      if(StringFind(u,"XAUUSD")!=0) continue;
+      if(!AkhiranSimbolDiizinkan(StringSubstr(candidate,6))) continue;
+      if(SymbolSelect(candidate,true)) return candidate;
+   }
+   return "";
+}
+string BuatGVPrefix()
+{
+   long login=AccountInfoInteger(ACCOUNT_LOGIN);
+   string server=AccountInfoString(ACCOUNT_SERVER);
+   StringReplace(server," ","_");
+   string sym=SymbolKerja; StringReplace(sym,".","_"); StringReplace(sym,"-","_");
+   string key=StringFormat("A416_%I64d_%s_%s_%I64u",login,server,sym,MagicNumber);
+   if(StringLen(key)>60) key=StringSubstr(key,0,60);
+   return key;
+}
+bool SimpanGV(string nama,double nilai)
+{
+   if(GlobalVariableSet(GVPrefix+nama,nilai)==0) { Print("State save gagal: ",nama," err=",GetLastError()); return false; }
+   GlobalVariablesFlush(); return true;
+}
+bool BacaGV(string nama,double &nilai)
+{
+   if(!GlobalVariableCheck(GVPrefix+nama)) return false;
+   return GlobalVariableGet(GVPrefix+nama,nilai);
+}
+
 //--------------------------------------------------
 // INISIALISASI
 //--------------------------------------------------
@@ -270,11 +230,15 @@ int OnInit() {
       Print("ERROR: Parameter EA tidak valid.");
       return INIT_PARAMETERS_INCORRECT;
    }
-   if(!SymbolSelect(InpSymbol,true)) {
-      Print("ERROR: Simbol tidak tersedia: ",InpSymbol);
+   SymbolKerja=CariSimbolKerja();
+   if(SymbolKerja=="") {
+      Print("ERROR: Simbol XAUUSD tidak ditemukan atau suffix tidak diizinkan. Chart=",_Symbol);
       return INIT_FAILED;
    }
-   atrHandle=iATR(InpSymbol,InpEntryTF,ATRPeriod);
+   GVPrefix=BuatGVPrefix();
+   StatePersistenceOK=(GVPrefix!="");
+   Print("[SYMBOL] Chart=",_Symbol," | Symbol kerja=",SymbolKerja," | SAFE MODE aktif.");
+   atrHandle=iATR(SymbolKerja,InpEntryTF,ATRPeriod);
    if(atrHandle==INVALID_HANDLE) {
       Print("ERROR: Gagal membuat indikator ATR.");
       return INIT_FAILED;
@@ -296,18 +260,18 @@ void OnDeinit(const int reason) {
 //--------------------------------------------------
 bool ValidasiHargaDanSpread() {
    MqlTick tick;
-   if(!SymbolInfoTick(InpSymbol,tick) || tick.bid<=0 || tick.ask<=0 || tick.ask<tick.bid)
+   if(!SymbolInfoTick(SymbolKerja,tick) || tick.bid<=0 || tick.ask<=0 || tick.ask<tick.bid)
       return false;
-   double point=SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   double point=SymbolInfoDouble(SymbolKerja,SYMBOL_POINT);
    if(point<=0) return false;
    return ((tick.ask-tick.bid)/point)<=SpreadMaxPoints;
 }
 
 bool DataCandleTersedia(ENUM_TIMEFRAMES tf) {
    long synchronized=0;
-   if(!SeriesInfoInteger(InpSymbol,tf,SERIES_SYNCHRONIZED,synchronized) || synchronized==0)
+   if(!SeriesInfoInteger(SymbolKerja,tf,SERIES_SYNCHRONIZED,synchronized) || synchronized==0)
       return false;
-   return Bars(InpSymbol,tf)>=100;
+   return Bars(SymbolKerja,tf)>=100;
 }
 
 bool ValidasiATR() {
@@ -318,7 +282,7 @@ bool ValidasiATR() {
 }
 
 double AmbilATR(ENUM_TIMEFRAMES tf) {
-   int h=iATR(InpSymbol,tf,ATRPeriod);
+   int h=iATR(SymbolKerja,tf,ATRPeriod);
    if(h==INVALID_HANDLE) return 0.0;
    double b[1];
    bool ok=BarsCalculated(h)>=ATRPeriod+2 && CopyBuffer(h,0,1,1,b)==1;
@@ -329,7 +293,7 @@ double AmbilATR(ENUM_TIMEFRAMES tf) {
 
 bool ValidasiDataIndikator(ENUM_TIMEFRAMES tf) {
    if(!DataCandleTersedia(tf)) return false;
-   int h=iATR(InpSymbol,tf,ATRPeriod);
+   int h=iATR(SymbolKerja,tf,ATRPeriod);
    if(h==INVALID_HANDLE) return false;
    bool ok=false;
    if(BarsCalculated(h)>=ATRPeriod+2) {
@@ -352,34 +316,34 @@ bool ValidasiSemuaTimeframe() {
 // MODUL 1: SWING
 //--------------------------------------------------
 bool DeteksiSwingHigh(ENUM_TIMEFRAMES tf,int shift) {
-   int total=Bars(InpSymbol,tf);
+   int total=Bars(SymbolKerja,tf);
    if(SwingLookback<1 || shift<=SwingLookback || shift+SwingLookback>=total) return false;
-   double v=iHigh(InpSymbol,tf,shift);
+   double v=iHigh(SymbolKerja,tf,shift);
    if(v<=0) return false;
    for(int i=1;i<=SwingLookback;i++) {
-      if(iHigh(InpSymbol,tf,shift-i)>=v || iHigh(InpSymbol,tf,shift+i)>v) return false;
+      if(iHigh(SymbolKerja,tf,shift-i)>=v || iHigh(SymbolKerja,tf,shift+i)>v) return false;
    }
    return true;
 }
 
 bool DeteksiSwingLow(ENUM_TIMEFRAMES tf,int shift) {
-   int total=Bars(InpSymbol,tf);
+   int total=Bars(SymbolKerja,tf);
    if(SwingLookback<1 || shift<=SwingLookback || shift+SwingLookback>=total) return false;
-   double v=iLow(InpSymbol,tf,shift);
+   double v=iLow(SymbolKerja,tf,shift);
    if(v<=0) return false;
    for(int i=1;i<=SwingLookback;i++) {
-      if(iLow(InpSymbol,tf,shift-i)<=v || iLow(InpSymbol,tf,shift+i)<v) return false;
+      if(iLow(SymbolKerja,tf,shift-i)<=v || iLow(SymbolKerja,tf,shift+i)<v) return false;
    }
    return true;
 }
 
 double AmbilSwingTerakhir(ENUM_TIMEFRAMES tf,bool cariHigh) {
-   int total=Bars(InpSymbol,tf);
+   int total=Bars(SymbolKerja,tf);
    if(total<=SwingLookback*2+2) return 0.0;
    int batas=(int)MathMin(SwingScanBars,total-SwingLookback-1);
    for(int shift=SwingLookback+1;shift<batas;shift++) {
-      if(cariHigh && DeteksiSwingHigh(tf,shift)) return iHigh(InpSymbol,tf,shift);
-      if(!cariHigh && DeteksiSwingLow(tf,shift)) return iLow(InpSymbol,tf,shift);
+      if(cariHigh && DeteksiSwingHigh(tf,shift)) return iHigh(SymbolKerja,tf,shift);
+      if(!cariHigh && DeteksiSwingLow(tf,shift)) return iLow(SymbolKerja,tf,shift);
    }
    return 0.0;
 }
@@ -390,12 +354,12 @@ double AmbilSwingTerakhir(ENUM_TIMEFRAMES tf,bool cariHigh) {
 bool DeteksiSweepHigh(ENUM_TIMEFRAMES tf) {
    double s=AmbilSwingTerakhir(tf,true);
    if(s<=0) return false;
-   return iHigh(InpSymbol,tf,1)>s && iClose(InpSymbol,tf,1)<s;
+   return iHigh(SymbolKerja,tf,1)>s && iClose(SymbolKerja,tf,1)<s;
 }
 bool DeteksiSweepLow(ENUM_TIMEFRAMES tf) {
    double s=AmbilSwingTerakhir(tf,false);
    if(s<=0) return false;
-   return iLow(InpSymbol,tf,1)<s && iClose(InpSymbol,tf,1)>s;
+   return iLow(SymbolKerja,tf,1)<s && iClose(SymbolKerja,tf,1)>s;
 }
 
 //--------------------------------------------------
@@ -404,8 +368,8 @@ bool DeteksiSweepLow(ENUM_TIMEFRAMES tf) {
 bool DeteksiDisplacement(ENUM_TIMEFRAMES tf,bool bullish) {
    double atr=AmbilATR(tf);
    if(atr<=0) return false;
-   double o=iOpen(InpSymbol,tf,1), c=iClose(InpSymbol,tf,1);
-   double h=iHigh(InpSymbol,tf,1), l=iLow(InpSymbol,tf,1);
+   double o=iOpen(SymbolKerja,tf,1), c=iClose(SymbolKerja,tf,1);
+   double h=iHigh(SymbolKerja,tf,1), l=iLow(SymbolKerja,tf,1);
    double range=h-l, body=MathAbs(c-o);
    if(range<=0 || body<atr*DisplacementATRMultiplier || body/range<MinBodyToRangeRatio)
       return false;
@@ -416,7 +380,7 @@ bool DeteksiDisplacement(ENUM_TIMEFRAMES tf,bool bullish) {
 // MODUL 4: MARKET STRUCTURE SHIFT
 //--------------------------------------------------
 bool DeteksiMSS(ENUM_TIMEFRAMES tf,bool bullish) {
-   double c=iClose(InpSymbol,tf,1);
+   double c=iClose(SymbolKerja,tf,1);
    if(c<=0) return false;
    if(bullish) {
       double s=AmbilSwingTerakhir(tf,true);
@@ -431,9 +395,9 @@ bool DeteksiMSS(ENUM_TIMEFRAMES tf,bool bullish) {
 //--------------------------------------------------
 ZonaFVG DeteksiFVG(ENUM_TIMEFRAMES tf) {
    ZonaFVG z; z.valid=false; z.bullish=false; z.batasBawah=0; z.batasAtas=0; z.ce50=0;
-   if(Bars(InpSymbol,tf)<10) return z;
-   double h3=iHigh(InpSymbol,tf,3), l3=iLow(InpSymbol,tf,3);
-   double h1=iHigh(InpSymbol,tf,1), l1=iLow(InpSymbol,tf,1);
+   if(Bars(SymbolKerja,tf)<10) return z;
+   double h3=iHigh(SymbolKerja,tf,3), l3=iLow(SymbolKerja,tf,3);
+   double h1=iHigh(SymbolKerja,tf,1), l1=iLow(SymbolKerja,tf,1);
    if(h3<=0 || l3<=0 || h1<=0 || l1<=0) return z;
    if(l1>h3) { z.batasBawah=h3; z.batasAtas=l1; z.bullish=true; z.valid=true; }
    else if(h1<l3) { z.batasBawah=h1; z.batasAtas=l3; z.bullish=false; z.valid=true; }
@@ -451,15 +415,15 @@ ZonaFVG DeteksiFVG(ENUM_TIMEFRAMES tf) {
 //--------------------------------------------------
 ZonaOB DeteksiOB(ENUM_TIMEFRAMES tf,bool bullish) {
    ZonaOB z; z.valid=false; z.bullish=bullish; z.batasBawah=0; z.batasAtas=0; z.waktu=0;
-   int total=Bars(InpSymbol,tf);
+   int total=Bars(SymbolKerja,tf);
    if(total<20) return z;
    for(int shift=2;shift<=10 && shift<total;shift++) {
-      double o=iOpen(InpSymbol,tf,shift), c=iClose(InpSymbol,tf,shift);
-      double h=iHigh(InpSymbol,tf,shift), l=iLow(InpSymbol,tf,shift);
+      double o=iOpen(SymbolKerja,tf,shift), c=iClose(SymbolKerja,tf,shift);
+      double h=iHigh(SymbolKerja,tf,shift), l=iLow(SymbolKerja,tf,shift);
       if(h<=l || o<=0 || c<=0) continue;
       bool opposite=bullish ? c<o : c>o;
       if(!opposite) continue;
-      z.valid=true; z.batasBawah=l; z.batasAtas=h; z.waktu=iTime(InpSymbol,tf,shift);
+      z.valid=true; z.batasBawah=l; z.batasAtas=h; z.waktu=iTime(SymbolKerja,tf,shift);
       return z;
    }
    return z;
@@ -469,11 +433,11 @@ ZonaOB DeteksiOB(ENUM_TIMEFRAMES tf,bool bullish) {
 // MODUL 7: BIAS MULTI-TIMEFRAME
 //--------------------------------------------------
 bool BiasBullish(ENUM_TIMEFRAMES tf) {
-   double c1=iClose(InpSymbol,tf,1), c2=iClose(InpSymbol,tf,2);
+   double c1=iClose(SymbolKerja,tf,1), c2=iClose(SymbolKerja,tf,2);
    return c1>0 && c2>0 && c1>c2;
 }
 bool BiasBearish(ENUM_TIMEFRAMES tf) {
-   double c1=iClose(InpSymbol,tf,1), c2=iClose(InpSymbol,tf,2);
+   double c1=iClose(SymbolKerja,tf,1), c2=iClose(SymbolKerja,tf,2);
    return c1>0 && c2>0 && c1<c2;
 }
 bool KonfirmasiBiasMTF(bool bullish) {
@@ -487,10 +451,10 @@ bool KonfirmasiBiasMTF(bool bullish) {
 //--------------------------------------------------
 bool ZonaMasihLayak(ENUM_TIMEFRAMES tf,bool bullish,double bawah,double atas,int shiftZona) {
    if(bawah<=0 || atas<=bawah || shiftZona<1) return false;
-   int total=Bars(InpSymbol,tf);
+   int total=Bars(SymbolKerja,tf);
    if(total<=shiftZona+1) return false;
    for(int shift=shiftZona-1;shift>=1;shift--) {
-      double c=iClose(InpSymbol,tf,shift), h=iHigh(InpSymbol,tf,shift), l=iLow(InpSymbol,tf,shift);
+      double c=iClose(SymbolKerja,tf,shift), h=iHigh(SymbolKerja,tf,shift), l=iLow(SymbolKerja,tf,shift);
       if(c<=0 || h<=0 || l<=0) return false;
       if(bullish && c<bawah) return false;
       if(!bullish && c>atas) return false;
@@ -528,13 +492,13 @@ bool ValidasiSinyalDasar(bool bullish) {
    bool bias=KonfirmasiBiasMTF(bullish);
    if(!sweep || !displacement || !mss || !fvgSearah || !ob.valid || !bias) return false;
    // FVG dihasilkan dari candle 3 dan 1; validasi mitigasi dari pembentukan zona.
-   if(!ZonaMasihLayak(InpEntryTF,fvg.bullish,fvg.batasBawah,fvg.batasAtas,3)) return false;
+   // Zona FVG baru dicatat sebagai kandidat; mitigasi final harus dipantau pada bar tertutup berikutnya.
    DataZona z;
    z.valid=true; z.bullish=bullish; z.batasBawah=fvg.batasBawah;
    z.batasAtas=fvg.batasAtas; z.ce50=fvg.ce50;
-   z.waktu=iTime(InpSymbol,InpEntryTF,1);
+   z.waktu=iTime(SymbolKerja,InpEntryTF,1);
    z.kategori=KlasifikasiZona(sweep,displacement,mss,fvgSearah,ob.valid);
-   double point=SymbolInfoDouble(InpSymbol,SYMBOL_POINT);
+   double point=SymbolInfoDouble(SymbolKerja,SYMBOL_POINT);
    if(point<=0 || !SimpanZonaRegistry(z,point*2.0)) return false;
    Print("Zona tervalidasi dan diregistrasi. Kategori=",(int)z.kategori,
          " | arah=",bullish ? "BUY" : "SELL");
@@ -548,7 +512,8 @@ bool CariTargetZonaSejenis(DataZona &zonaEntry,double hargaSekarang,DataZona &zo
    if(!ZonaRegistryValid(zonaEntry) || hargaSekarang<=0) return false;
    double best=DBL_MAX;
    int bestIndex=-1;
-   for(int i=0;i<JumlahZonaRegistry;i++) {
+   int batas=MathMin(JumlahZonaRegistry,MAX_ZONA_REGISTRY);
+   for(int i=0;i<batas;i++) {
       if(!ZonaRegistryValid(RegistryZona[i])) continue;
       if(RegistryZona[i].kategori!=zonaEntry.kategori) continue;
       if(RegistryZona[i].bullish==zonaEntry.bullish || RegistryZona[i].waktu==zonaEntry.waktu) continue;
@@ -584,7 +549,7 @@ bool RiskGuardianBolehLanjut() {
    for(int i=0;i<PositionsTotal();i++) {
       ulong ticket=PositionGetTicket(i);
       if(ticket==0) continue;
-      if(PositionGetString(POSITION_SYMBOL)!=InpSymbol ||
+      if(PositionGetString(POSITION_SYMBOL)!=SymbolKerja ||
          (ulong)PositionGetInteger(POSITION_MAGIC)!=MagicNumber) continue;
       double p=PositionGetDouble(POSITION_PROFIT)+PositionGetDouble(POSITION_SWAP);
       if(p<0) floatingLoss+=-p;
@@ -594,52 +559,73 @@ bool RiskGuardianBolehLanjut() {
 }
 
 //--------------------------------------------------
-// MODUL 15: DAILY LOSS GUARD (baseline tersimpan saat sesi berjalan)
+// MODUL 15: DAILY LOSS GUARD 鈥� hanya transaksi/posisi EA ini
 //--------------------------------------------------
-datetime AwalHariServer() {
-   MqlDateTime t; TimeToStruct(TimeCurrent(),t);
-   t.hour=0; t.min=0; t.sec=0;
+datetime AwalHariServer()
+{
+   datetime now=TimeTradeServer(); if(now<=0) now=TimeCurrent();
+   MqlDateTime t; TimeToStruct(now,t); t.hour=0; t.min=0; t.sec=0;
    return StructToTime(t);
 }
-// Baseline harian persisten: tetap sama setelah EA/terminal restart.
-string NamaGVBaselineHarian(datetime hari) {
-   return "A416_D_" + (string)AccountInfoInteger(ACCOUNT_LOGIN) + "_" +
-          (string)MagicNumber + "_" + (string)hari;
+double HitungProfitRealisasiEASejak(datetime mulai)
+{
+   datetime now=TimeTradeServer(); if(now<=0) now=TimeCurrent();
+   if(mulai<=0 || now<mulai || !HistorySelect(mulai,now)) return EMPTY_VALUE;
+   double total=0.0;
+   for(int i=0;i<HistoryDealsTotal();i++) {
+      ulong ticket=HistoryDealGetTicket(i); if(ticket==0) continue;
+      if(HistoryDealGetString(ticket,DEAL_SYMBOL)!=SymbolKerja) continue;
+      if((ulong)HistoryDealGetInteger(ticket,DEAL_MAGIC)!=MagicNumber) continue;
+      total += HistoryDealGetDouble(ticket,DEAL_PROFIT)
+             + HistoryDealGetDouble(ticket,DEAL_SWAP)
+             + HistoryDealGetDouble(ticket,DEAL_COMMISSION);
+   }
+   return total;
 }
-
-bool PerbaruiEkuitasAwalHari() {
-   datetime day=AwalHariServer();
-   if(day<=0) return false;
-
-   string namaGV=NamaGVBaselineHarian(day);
-   if(GlobalVariableCheck(namaGV)) {
-      double baseline=GlobalVariableGet(namaGV);
-      if(baseline<=0 || !MathIsValidNumber(baseline)) return false;
-      EkuitasAwalHari=baseline;
-      HariTercatat=day;
-      return true;
+double HitungFloatingEA()
+{
+   double total=0.0;
+   for(int i=0;i<PositionsTotal();i++) {
+      ulong ticket=PositionGetTicket(i); if(ticket==0) continue;
+      if(PositionGetString(POSITION_SYMBOL)!=SymbolKerja ||
+         (ulong)PositionGetInteger(POSITION_MAGIC)!=MagicNumber) continue;
+      total += PositionGetDouble(POSITION_PROFIT)+PositionGetDouble(POSITION_SWAP);
    }
-
-   double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   if(eq<=0 || !MathIsValidNumber(eq)) return false;
-   if(GlobalVariableSet(namaGV,eq)==0) {
-      Print("Daily Loss Guard: gagal menyimpan baseline persisten.");
-      return false;
+   return total;
+}
+bool PerbaruiMetrikHarianEA()
+{
+   datetime day=AwalHariServer(); if(day<=0 || GVPrefix=="") return false;
+   double savedDay=0, savedBase=0, savedPeak=0, savedTriggered=0;
+   bool sameDay=BacaGV("day",savedDay) && (datetime)savedDay==day;
+   if(!sameDay) {
+      // baseline metric dibuat dari saldo saat pertama kali EA aktif hari itu;
+      // tidak dapat merekonstruksi posisi yang sudah ditutup sebelum EA pertama kali berjalan.
+      MetrikAwalHariEA=AccountInfoDouble(ACCOUNT_BALANCE);
+      PuncakMetrikHariEA=MetrikAwalHariEA;
+      DailyLossTerpicu=false;
+      if(!SimpanGV("day",(double)day) || !SimpanGV("dBase",MetrikAwalHariEA) ||
+         !SimpanGV("dPeak",PuncakMetrikHariEA) || !SimpanGV("dTrip",0.0)) return false;
+   } else {
+      if(!BacaGV("dBase",savedBase) || !BacaGV("dPeak",savedPeak) || !BacaGV("dTrip",savedTriggered)) return false;
+      MetrikAwalHariEA=savedBase; PuncakMetrikHariEA=savedPeak; DailyLossTerpicu=(savedTriggered>=1.0);
    }
-   EkuitasAwalHari=eq;
-   HariTercatat=day;
-   Print("Daily Loss Guard: baseline harian persisten tersimpan.");
+   double realized=HitungProfitRealisasiEASejak(day);
+   if(realized==EMPTY_VALUE) return false;
+   double metric=MetrikAwalHariEA+realized+HitungFloatingEA();
+   if(!MathIsValidNumber(metric) || metric<=0) return false;
+   if(metric>PuncakMetrikHariEA) { PuncakMetrikHariEA=metric; if(!SimpanGV("dPeak",PuncakMetrikHariEA)) return false; }
+   double ddPct=(PuncakMetrikHariEA-metric)/PuncakMetrikHariEA*100.0;
+   if(ddPct>=MaxDailyLossPct && !DailyLossTerpicu) {
+      DailyLossTerpicu=true; SimpanGV("dTrip",1.0);
+      Print("Daily Loss Guard: drawdown metrik EA ",DoubleToString(ddPct,2),"% >= ",DoubleToString(MaxDailyLossPct,2),"%. Sinyal dikunci; SAFE MODE tidak menutup posisi.");
+   }
    return true;
 }
-bool BatasRugiHarianTercapai() {
-   if(!PerbaruiEkuitasAwalHari()) return true;
-   double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   if(eq<=0) return true;
-   double limit=EkuitasAwalHari*MaxDailyLossPct/100.0;
-   if(EkuitasAwalHari-eq>=limit) {
-      Print("Daily Loss Guard: batas kerugian harian tercapai."); return true;
-   }
-   return false;
+bool BatasRugiHarianTercapai()
+{
+   if(!PerbaruiMetrikHarianEA()) { Print("Daily Loss Guard: data/status tidak valid; fail-safe blokir sinyal."); return true; }
+   return DailyLossTerpicu;
 }
 
 //--------------------------------------------------
@@ -673,9 +659,9 @@ bool ValidasiEksekusiPasar() {
    return true;
 }
 bool ValidasiVolumeOrder(double volume) {
-   double minLot=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MIN);
-   double maxLot=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_MAX);
-   double step=SymbolInfoDouble(InpSymbol,SYMBOL_VOLUME_STEP);
+   double minLot=SymbolInfoDouble(SymbolKerja,SYMBOL_VOLUME_MIN);
+   double maxLot=SymbolInfoDouble(SymbolKerja,SYMBOL_VOLUME_MAX);
+   double step=SymbolInfoDouble(SymbolKerja,SYMBOL_VOLUME_STEP);
    if(volume<=0 || minLot<=0 || maxLot<minLot || step<=0 || volume<minLot || volume>maxLot)
       return false;
    return MathAbs((volume-minLot)/step-MathRound((volume-minLot)/step))<0.000001;
@@ -689,7 +675,7 @@ int HitungPosisiEA() {
    for(int i=0;i<PositionsTotal();i++) {
       ulong ticket=PositionGetTicket(i);
       if(ticket==0) continue;
-      if(PositionGetString(POSITION_SYMBOL)==InpSymbol &&
+      if(PositionGetString(POSITION_SYMBOL)==SymbolKerja &&
          (ulong)PositionGetInteger(POSITION_MAGIC)==MagicNumber) total++;
    }
    return total;
@@ -702,22 +688,36 @@ bool BatasPosisiEAValid() {
 }
 
 //--------------------------------------------------
-// MODUL 20: PROFIT LOCK (pemantauan saja)
+// MODUL 20: PROFIT LOCK 鈥� khusus P/L EA dan status persisten
 //--------------------------------------------------
-void PerbaruiProfitLock() {
-   if(!AktifkanProfitLock || ProfitLockTerpicu) return;
-   double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   if(eq<=0) return;
-   if(EkuitasAwalProfitLock<=0) { EkuitasAwalProfitLock=eq; PuncakEkuitasEA=eq; return; }
-   if(eq>PuncakEkuitasEA) PuncakEkuitasEA=eq;
-   double profit=eq-EkuitasAwalProfitLock;
-   double drawdown=PuncakEkuitasEA-eq;
-   if(profit>=ProfitLockAktifUSD && drawdown>=ProfitLockMundurUSD) {
-      ProfitLockTerpicu=true;
-      Print("Profit Lock terpicu. Mode aman: tidak ada posisi ditutup.");
+void PerbaruiProfitLock()
+{
+   if(!AktifkanProfitLock || GVPrefix=="") return;
+   double start=0, peak=0, tripped=0, savedDay=0;
+   datetime day=AwalHariServer();
+   if(day<=0) return;
+   bool sameDay=BacaGV("plDay",savedDay) && (datetime)savedDay==day;
+   if(!sameDay) {
+      start=0.0; peak=0.0; tripped=0.0;
+      if(!SimpanGV("plDay",(double)day) || !SimpanGV("plBase",start) ||
+         !SimpanGV("plPeak",peak) || !SimpanGV("plTrip",tripped)) return;
+   } else if(!BacaGV("plBase",start) || !BacaGV("plPeak",peak) || !BacaGV("plTrip",tripped)) {
+      Print("Profit Lock: state persisten hilang; fail-safe memblokir sinyal.");
+      ProfitLockTerpicu=true; return;
+   }
+   EkuitasAwalProfitLock=start; PuncakEkuitasEA=peak; ProfitLockTerpicu=(tripped>=1.0);
+   if(ProfitLockTerpicu) return;
+   double realized=HitungProfitRealisasiEASejak(day);
+   if(realized==EMPTY_VALUE) return;
+   double pnl=realized+HitungFloatingEA();
+   if(pnl>PuncakEkuitasEA) { PuncakEkuitasEA=pnl; SimpanGV("plPeak",PuncakEkuitasEA); }
+   if(PuncakEkuitasEA>=ProfitLockAktifUSD && (PuncakEkuitasEA-pnl)>=ProfitLockMundurUSD) {
+      ProfitLockTerpicu=true; SimpanGV("plTrip",1.0);
+      Print("Profit Lock terpicu pada P/L EA. Sinyal dikunci; SAFE MODE tidak menutup posisi.");
    }
 }
-bool ProfitLockBolehLanjut() {
+bool ProfitLockBolehLanjut()
+{
    PerbaruiProfitLock();
    return !ProfitLockTerpicu;
 }
@@ -745,8 +745,8 @@ bool SafetyGateLolos() {
 //--------------------------------------------------
 bool KonfirmasiM1(bool bullish) {
    if(!DataCandleTersedia(PERIOD_M1)) return false;
-   double o=iOpen(InpSymbol,PERIOD_M1,1), c=iClose(InpSymbol,PERIOD_M1,1);
-   double h=iHigh(InpSymbol,PERIOD_M1,1), l=iLow(InpSymbol,PERIOD_M1,1);
+   double o=iOpen(SymbolKerja,PERIOD_M1,1), c=iClose(SymbolKerja,PERIOD_M1,1);
+   double h=iHigh(SymbolKerja,PERIOD_M1,1), l=iLow(SymbolKerja,PERIOD_M1,1);
    if(o<=0 || c<=0 || h<=l) return false;
    return bullish ? c>o : c<o;
 }
@@ -758,7 +758,7 @@ void OnTick() {
    // Tidak ada trade.Buy, trade.Sell, PositionClose atau order send di build ini.
    if(!SafetyGateLolos()) return;
    if(!ValidasiATR()) return;
-   datetime barTime=iTime(InpSymbol,InpEntryTF,0);
+   datetime barTime=iTime(SymbolKerja,InpEntryTF,0);
    if(barTime<=0 || barTime==lastBarTime) return;
    lastBarTime=barTime;
 
