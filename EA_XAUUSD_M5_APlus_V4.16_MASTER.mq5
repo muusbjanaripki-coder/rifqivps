@@ -58,6 +58,7 @@ double MetrikAwalHariEA = 0.0;
 double PuncakMetrikHariEA = 0.0;
 bool DailyLossTerpicu = false;
 string GVPrefix = "";
+string RegistryGVPrefix = "";
 bool StatePersistenceOK = false;
 
 enum KategoriZona { ZONA_SUPER = 0, ZONA_BIASA = 1, ZONA_RETEST = 2 };
@@ -96,8 +97,9 @@ int JumlahZonaRegistry = 0;
 // REGISTRY ZONA
 //--------------------------------------------------
 bool ZonaRegistryValid(DataZona &zona) {
-   if(!zona.valid || zona.batasBawah <= 0.0 ||
-      zona.batasAtas <= zona.batasBawah ||
+   if(!zona.valid || !MathIsValidNumber(zona.batasBawah) ||
+      !MathIsValidNumber(zona.batasAtas) || !MathIsValidNumber(zona.ce50) ||
+      zona.batasBawah <= 0.0 || zona.batasAtas <= zona.batasBawah ||
       zona.ce50 < zona.batasBawah || zona.ce50 > zona.batasAtas ||
       zona.waktu <= 0) return false;
    if(zona.kategori != ZONA_SUPER && zona.kategori != ZONA_BIASA &&
@@ -146,13 +148,93 @@ bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga) {
    }
    RegistryZona[idx]=zona;
    if(idx==JumlahZonaRegistry) JumlahZonaRegistry++;
+   if(!SimpanSemuaZonaRegistry()) return false;
    Print("Zone Registry: zona disimpan pada slot ",idx,". Total slot terpakai=",JumlahZonaRegistry);
+   return true;
+}
+
+bool SimpanSatuZonaRegistry(int indeks) {
+   if(RegistryGVPrefix=="" || indeks<0 || indeks>=MAX_ZONA_REGISTRY) return false;
+   string k=IntegerToString(indeks)+"_";
+   DataZona z=RegistryZona[indeks];
+   bool ok=true;
+   ok = (GlobalVariableSet(RegistryGVPrefix+k+"v",z.valid ? 1.0 : 0.0)>0) && ok;
+   ok = (GlobalVariableSet(RegistryGVPrefix+k+"b",z.bullish ? 1.0 : 0.0)>0) && ok;
+   ok = (GlobalVariableSet(RegistryGVPrefix+k+"k",(double)z.kategori)>0) && ok;
+   ok = (GlobalVariableSet(RegistryGVPrefix+k+"lo",z.batasBawah)>0) && ok;
+   ok = (GlobalVariableSet(RegistryGVPrefix+k+"hi",z.batasAtas)>0) && ok;
+   ok = (GlobalVariableSet(RegistryGVPrefix+k+"ce",z.ce50)>0) && ok;
+   ok = (GlobalVariableSet(RegistryGVPrefix+k+"tm",(double)z.waktu)>0) && ok;
+   return ok;
+}
+
+bool SimpanSemuaZonaRegistry() {
+   if(RegistryGVPrefix=="") return false;
+   bool ok=true;
+   for(int i=0;i<JumlahZonaRegistry;i++)
+      if(!SimpanSatuZonaRegistry(i)) ok=false;
+   if(GlobalVariableSet(RegistryGVPrefix+"count",(double)JumlahZonaRegistry)<=0) ok=false;
+   GlobalVariablesFlush();
+   if(!ok) Print("Zone Registry: penyimpanan persisten gagal; registry mungkin tidak lengkap.");
+   return ok;
+}
+
+bool PulihkanZonaRegistry() {
+   if(RegistryGVPrefix=="") return false;
+   double countValue=0;
+   if(!GlobalVariableGet(RegistryGVPrefix+"count",countValue)) {
+      JumlahZonaRegistry=0;
+      return true; // instalasi pertama: registry masih kosong
+   }
+   int count=(int)countValue;
+   if(count<0 || count>MAX_ZONA_REGISTRY || countValue!=(double)count) {
+      Print("Zone Registry: metadata jumlah slot rusak; pemulihan diblokir.");
+      return false;
+   }
+   DataZona restored[];
+   ArrayResize(restored,count);
+   for(int i=0;i<count;i++) {
+      string k=IntegerToString(i)+"_";
+      double v=0,b=0,cat=0,lo=0,hi=0,ce=0,tm=0;
+      if(!GlobalVariableGet(RegistryGVPrefix+k+"v",v) ||
+         !GlobalVariableGet(RegistryGVPrefix+k+"b",b) ||
+         !GlobalVariableGet(RegistryGVPrefix+k+"k",cat) ||
+         !GlobalVariableGet(RegistryGVPrefix+k+"lo",lo) ||
+         !GlobalVariableGet(RegistryGVPrefix+k+"hi",hi) ||
+         !GlobalVariableGet(RegistryGVPrefix+k+"ce",ce) ||
+         !GlobalVariableGet(RegistryGVPrefix+k+"tm",tm)) {
+         Print("Zone Registry: data slot ",i," tidak lengkap; pemulihan dibatalkan.");
+         return false;
+      }
+      if((v!=0.0 && v!=1.0) || (b!=0.0 && b!=1.0) ||
+         cat<ZONA_SUPER || cat>ZONA_RETEST || cat!=MathFloor(cat) ||
+         tm<0 || tm!=MathFloor(tm)) {
+         Print("Zone Registry: data slot ",i," tidak valid; pemulihan dibatalkan.");
+         return false;
+      }
+      restored[i].valid=(v>=1.0);
+      restored[i].bullish=(b>=1.0);
+      restored[i].kategori=(KategoriZona)(int)cat;
+      restored[i].batasBawah=lo;
+      restored[i].batasAtas=hi;
+      restored[i].ce50=ce;
+      restored[i].waktu=(datetime)tm;
+      if(restored[i].valid && !ZonaRegistryValid(restored[i])) {
+         Print("Zone Registry: zona aktif slot ",i," gagal validasi; pemulihan dibatalkan.");
+         return false;
+      }
+   }
+   JumlahZonaRegistry=count;
+   for(int i=0;i<count;i++) RegistryZona[i]=restored[i];
+   Print("Zone Registry: ",JumlahZonaRegistry," slot berhasil dipulihkan.");
    return true;
 }
 
 bool NonaktifkanZonaRegistry(int indeks) {
    if(indeks<0 || indeks>=JumlahZonaRegistry || indeks>=MAX_ZONA_REGISTRY) return false;
    RegistryZona[indeks].valid=false;
+   SimpanSatuZonaRegistry(indeks);
+   GlobalVariablesFlush();
    return true;
 }
 
@@ -237,6 +319,12 @@ int OnInit() {
    }
    GVPrefix=BuatGVPrefix();
    StatePersistenceOK=(GVPrefix!="");
+   // Prefix registry dibuat pendek agar setiap nama Global Variable tetap < 63 karakter.
+   RegistryGVPrefix=StringSubstr(GVPrefix,0,24)+"_ZR_";
+   if(!StatePersistenceOK || !PulihkanZonaRegistry()) {
+      Print("ERROR: state/Zone Registry tidak dapat dipulihkan; EA berhenti demi keamanan.");
+      return INIT_FAILED;
+   }
    Print("[SYMBOL] Chart=",_Symbol," | Symbol kerja=",SymbolKerja," | SAFE MODE aktif.");
    atrHandle=iATR(SymbolKerja,InpEntryTF,ATRPeriod);
    if(atrHandle==INVALID_HANDLE) {
