@@ -1,6 +1,6 @@
 #property strict
-#property version "4.161"
-#property description "APlus V4.16 MASTER - safe monitoring build; does not send or close orders"
+#property version "4.162"
+#property description "APlus V4.16.2 MASTER - SIGNAL_ONLY monitoring build; AUTO_TRADE locked pending full validation"
 
 #include <Trade/Trade.mqh>
 CTrade trade;
@@ -13,6 +13,9 @@ CTrade trade;
 input string InpSymbol = "XAUUSD"; // Base name; runtime resolver accepts validated XAUUSD suffixes
 string SymbolKerja = "";
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
+
+enum ModeOperasiEA { SIGNAL_ONLY = 0, AUTO_TRADE = 1 };
+input ModeOperasiEA ModeOperasi = SIGNAL_ONLY; // AUTO_TRADE sengaja dikunci sampai engine eksekusi selesai diuji
 
 input double RiskNormalPct = 0.35; // konfigurasi; lot berbasis SL belum diaktifkan pada SAFE build
 input double RiskSuperPct = 0.50; // konfigurasi; lot berbasis SL belum diaktifkan pada SAFE build
@@ -44,6 +47,9 @@ input int DeviasiMaksimalPoints = 30;
 input int MaxPosisiEA = 8;
 
 input bool AktifkanProfitLock = true;
+input bool TampilkanZonaChart = true;
+input bool AktifkanAlertSinyal = false;
+input int ZonaExtendBars = 30;
 input double ProfitLockAktifUSD = 10.0;
 input double ProfitLockMundurUSD = 3.0;
 
@@ -94,6 +100,39 @@ DataZona RegistryZona[MAX_ZONA_REGISTRY];
 int JumlahZonaRegistry = 0;
 
 //--------------------------------------------------
+// VISUALISASI ZONA (hanya objek chart, tidak mengirim order)
+//--------------------------------------------------
+string NamaObjekZona(DataZona &zona) {
+   string arah=zona.bullish ? "BUY" : "SELL";
+   return StringFormat("A416_%I64u_%s_%d_%I64d",MagicNumber,arah,(int)zona.kategori,(long)zona.waktu);
+}
+void GambarZona(DataZona &zona) {
+   if(!TampilkanZonaChart || !ZonaRegistryValid(zona)) return;
+   string name=NamaObjekZona(zona);
+   datetime t1=zona.waktu;
+   int sec=PeriodSeconds(InpEntryTF); if(sec<=0) sec=300;
+   datetime t2=TimeCurrent()+sec*MathMax(1,ZonaExtendBars);
+   if(ObjectFind(0,name)<0) ObjectCreate(0,name,OBJ_RECTANGLE,0,t1,zona.batasAtas,t2,zona.batasBawah);
+   else { ObjectMove(0,name,0,t1,zona.batasAtas); ObjectMove(0,name,1,t2,zona.batasBawah); }
+   color clr=zona.bullish ? clrDarkSeaGreen : clrLightCoral;
+   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,name,OBJPROP_STYLE,STYLE_DOT);
+   ObjectSetInteger(0,name,OBJPROP_WIDTH,1);
+   ObjectSetInteger(0,name,OBJPROP_FILL,true);
+   ObjectSetInteger(0,name,OBJPROP_BACK,true);
+   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
+   string label=name+"_TXT";
+   string cat=(zona.kategori==ZONA_SUPER ? "SUPER" : (zona.kategori==ZONA_BIASA ? "BIASA" : "RETEST"));
+   string txt=cat+(zona.bullish ? " BUY" : " SELL")+" | CE50 "+DoubleToString(zona.ce50,_Digits);
+   if(ObjectFind(0,label)<0) ObjectCreate(0,label,OBJ_TEXT,0,t2,zona.ce50);
+   else ObjectMove(0,label,0,t2,zona.ce50);
+   ObjectSetString(0,label,OBJPROP_TEXT,txt);
+   ObjectSetInteger(0,label,OBJPROP_COLOR,clr);
+   ObjectSetInteger(0,label,OBJPROP_FONTSIZE,8);
+   ObjectSetInteger(0,label,OBJPROP_SELECTABLE,false);
+}
+
+//--------------------------------------------------
 // REGISTRY ZONA
 //--------------------------------------------------
 bool ZonaRegistryValid(DataZona &zona) {
@@ -140,7 +179,7 @@ bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga) {
       return false;
    }
    int idx=CariZonaRegistry(zona,toleransiHarga);
-   if(idx>=0) { RegistryZona[idx]=zona; return true; }
+   if(idx>=0) { RegistryZona[idx]=zona; GambarZona(zona); return SimpanSemuaZonaRegistry(); }
    idx=CariSlotKosongRegistry();
    if(idx<0) {
       Print("Zone Registry penuh: tidak ada slot kosong.");
@@ -148,6 +187,7 @@ bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga) {
    }
    RegistryZona[idx]=zona;
    if(idx==JumlahZonaRegistry) JumlahZonaRegistry++;
+   GambarZona(zona);
    if(!SimpanSemuaZonaRegistry()) return false;
    Print("Zone Registry: zona disimpan pada slot ",idx,". Total slot terpakai=",JumlahZonaRegistry);
    return true;
@@ -300,6 +340,10 @@ bool BacaGV(string nama,double &nilai)
 // INISIALISASI
 //--------------------------------------------------
 int OnInit() {
+   if(ModeOperasi!=SIGNAL_ONLY) {
+      Print("AUTO_TRADE BELUM TERSEDIA: execution engine, sizing lot berbasis SL, SL/TP broker-side, dan recovery order belum divalidasi. Gunakan SIGNAL_ONLY.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
    if(RiskNormalPct<=0 || RiskNormalPct>100 || RiskSuperPct<=0 || RiskSuperPct>100 ||
       DailyLossLimitPct<=0 || DailyLossLimitPct>100 ||
       MaxDailyLossPct<=0 || MaxDailyLossPct>100 ||
@@ -308,7 +352,7 @@ int OnInit() {
       MaxRetest<1 || SwingLookback<1 || SwingScanBars<=SwingLookback*2 ||
       DisplacementATRMultiplier<=0 || MinBodyToRangeRatio<=0 ||
       MinBodyToRangeRatio>1 || MinFVG_ATR<0 || MaxPosisiEA<1 ||
-      DeviasiMaksimalPoints<0 || ProfitLockAktifUSD<0 || ProfitLockMundurUSD<0) {
+      DeviasiMaksimalPoints<0 || ProfitLockAktifUSD<0 || ProfitLockMundurUSD<0 || ZonaExtendBars<1) {
       Print("ERROR: Parameter EA tidak valid.");
       return INIT_PARAMETERS_INCORRECT;
    }
@@ -332,7 +376,7 @@ int OnInit() {
       return INIT_FAILED;
    }
    trade.SetExpertMagicNumber(MagicNumber);
-   Print("APlus V4.16 MASTER diinisialisasi. MODE AMAN aktif; tidak ada transaksi otomatis.");
+   Print("APlus V4.16.2 diinisialisasi. MODE SIGNAL_ONLY aktif; order entry/close dinonaktifkan.");
    return INIT_SUCCEEDED;
 }
 
@@ -341,6 +385,7 @@ void OnDeinit(const int reason) {
       IndicatorRelease(atrHandle);
       atrHandle=INVALID_HANDLE;
    }
+   // Objek zona sengaja dipertahankan saat EA dilepas agar pengguna dapat meninjau chart.
 }
 
 //--------------------------------------------------
@@ -561,11 +606,16 @@ int BatasEntryKategori(KategoriZona k) {
    return 0;
 }
 KategoriZona KlasifikasiZona(bool sweep,bool displacement,bool mss,bool fvg,bool ob) {
+   // Dipanggil hanya setelah syarat inti lolos. RETEST tidak boleh menjadi
+   // tempat penampungan sinyal yang belum memenuhi konfirmasi.
    int score=0;
-   if(sweep) score++; if(displacement) score++; if(mss) score++; if(fvg) score++; if(ob) score++;
+   if(sweep) score++;
+   if(displacement) score++;
+   if(mss) score++;
+   if(fvg) score++;
+   if(ob) score++;
    if(score>=5) return ZONA_SUPER;
-   if(score>=3) return ZONA_BIASA;
-   return ZONA_RETEST;
+   return ZONA_BIASA;
 }
 
 //--------------------------------------------------
@@ -849,10 +899,10 @@ bool KonfirmasiM1(bool bullish) {
 }
 
 //--------------------------------------------------
-// ONTICK: PEMANTAUAN SINYAL SAJA
+// ONTICK: SIGNAL_ONLY 鈥� TIDAK ADA PENGIRIMAN ORDER
 //--------------------------------------------------
 void OnTick() {
-   // Tidak ada trade.Buy, trade.Sell, PositionClose atau order send di build ini.
+   // BUILD INI KHUSUS SIGNAL_ONLY. Tidak ada trade.Buy, trade.Sell, PositionClose atau OrderSend.
    if(!SafetyGateLolos()) return;
    if(!ValidasiATR()) return;
    datetime barTime=iTime(SymbolKerja,InpEntryTF,0);
@@ -862,10 +912,10 @@ void OnTick() {
    bool buyValid=ValidasiSinyalDasar(true) && KonfirmasiM1(true);
    bool sellValid=ValidasiSinyalDasar(false) && KonfirmasiM1(false);
 
-   Print("APlus V4.16 MASTER | BUY=",buyValid,
-         " | SELL=",sellValid,
-         " | Posisi EA=",HitungPosisiEA(),
-         " | Zona aktif BUY Super=",HitungZonaAktif(ZONA_SUPER,true),
-         " | Zona aktif SELL Super=",HitungZonaAktif(ZONA_SUPER,false),
-         " | MODE AMAN.");
+   string status=StringFormat("APlus V4.16.2 | SIGNAL_ONLY | BUY=%s | SELL=%s | PosisiEA=%d | Zona Super BUY/SELL=%d/%d | BIAS MTF=%s",
+      buyValid ? "VALID" : "-",sellValid ? "VALID" : "-",HitungPosisiEA(),
+      HitungZonaAktif(ZONA_SUPER,true),HitungZonaAktif(ZONA_SUPER,false),
+      buyValid ? "BULLISH" : (sellValid ? "BEARISH" : "NETRAL/WAIT"));
+   Print(status);
+   if(AktifkanAlertSinyal && (buyValid || sellValid)) Alert(status);
 }
