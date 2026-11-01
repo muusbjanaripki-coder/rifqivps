@@ -1,25 +1,31 @@
 #property strict
 #property version "4.162"
-#property description "APlus V4.16.2 MASTER - SIGNAL_ONLY monitoring build; AUTO_TRADE locked pending full validation"
+#property description "APlus V4.16.2 MASTER - SIGNAL_ONLY monitoring build"
 
 #include <Trade/Trade.mqh>
 CTrade trade;
 
 //==================================================
-// EA XAUUSD M5 APLUS V4.16 MASTER REPAIR CANDIDATE
-// MODE AMAN: TIDAK MEMBUKA / MENUTUP TRANSAKSI
+// EA XAUUSD M5 APLUS V4.16.2 MASTER
+// SAFE MODE: SIGNAL_ONLY
 //==================================================
 
-input string InpSymbol = "XAUUSD"; // Base name; runtime resolver accepts validated XAUUSD suffixes
+input string InpSymbol = "XAUUSD";
 string SymbolKerja = "";
+
 input ENUM_TIMEFRAMES InpEntryTF = PERIOD_M5;
 
-enum ModeOperasiEA { SIGNAL_ONLY = 0, AUTO_TRADE = 1 };
-input ModeOperasiEA ModeOperasi = SIGNAL_ONLY; // AUTO_TRADE sengaja dikunci sampai engine eksekusi selesai diuji
+enum ModeOperasiEA
+{
+   SIGNAL_ONLY = 0,
+   AUTO_TRADE = 1
+};
 
-input double RiskNormalPct = 0.35; // konfigurasi; lot berbasis SL belum diaktifkan pada SAFE build
-input double RiskSuperPct = 0.50; // konfigurasi; lot berbasis SL belum diaktifkan pada SAFE build
-input double DailyLossLimitPct = 4.0; // parameter kompatibilitas; guard aktif memakai MaxDailyLossPct
+input ModeOperasiEA ModeOperasi = SIGNAL_ONLY;
+
+input double RiskNormalPct = 0.35;
+input double RiskSuperPct = 0.50;
+input double DailyLossLimitPct = 4.0;
 
 input int MaxSuper = 8;
 input int MaxBiasa = 5;
@@ -39,7 +45,7 @@ input double MinFVG_ATR = 0.10;
 input double MaxRiskPerBasketPct = 0.50;
 input double MaxDailyLossPct = 4.0;
 
-input bool AktifkanNewsFilter = false; // manual schedule only; enable only after configuring times
+input bool AktifkanNewsFilter = false;
 input datetime NewsMulai = 0;
 input datetime NewsSelesai = 0;
 
@@ -49,27 +55,48 @@ input int MaxPosisiEA = 8;
 input bool AktifkanProfitLock = true;
 input bool TampilkanZonaChart = true;
 input bool AktifkanAlertSinyal = false;
+
 input int ZonaExtendBars = 30;
 input double ProfitLockAktifUSD = 10.0;
 input double ProfitLockMundurUSD = 3.0;
 
+//==================================================
+// STATE GLOBAL
+//==================================================
+
 datetime lastBarTime = 0;
 int atrHandle = INVALID_HANDLE;
+
 double EkuitasAwalHari = 0.0;
 datetime HariTercatat = 0;
 double PuncakEkuitasEA = 0.0;
 double EkuitasAwalProfitLock = 0.0;
+
 bool ProfitLockTerpicu = false;
+
 double MetrikAwalHariEA = 0.0;
 double PuncakMetrikHariEA = 0.0;
+
 bool DailyLossTerpicu = false;
+
 string GVPrefix = "";
 string RegistryGVPrefix = "";
+
 bool StatePersistenceOK = false;
 
-enum KategoriZona { ZONA_SUPER = 0, ZONA_BIASA = 1, ZONA_RETEST = 2 };
+//==================================================
+// STRUKTUR ZONA
+//==================================================
 
-struct ZonaFVG {
+enum KategoriZona
+{
+   ZONA_SUPER = 0,
+   ZONA_BIASA = 1,
+   ZONA_RETEST = 2
+};
+
+struct ZonaFVG
+{
    bool valid;
    bool bullish;
    double batasBawah;
@@ -77,7 +104,8 @@ struct ZonaFVG {
    double ce50;
 };
 
-struct ZonaOB {
+struct ZonaOB
+{
    bool valid;
    bool bullish;
    double batasBawah;
@@ -85,7 +113,8 @@ struct ZonaOB {
    datetime waktu;
 };
 
-struct DataZona {
+struct DataZona
+{
    bool valid;
    bool bullish;
    KategoriZona kategori;
@@ -95,47 +124,35 @@ struct DataZona {
    datetime waktu;
 };
 
+//==================================================
+// REGISTRY GLOBAL
+//==================================================
+
 #define MAX_ZONA_REGISTRY 100
+
 DataZona RegistryZona[MAX_ZONA_REGISTRY];
 int JumlahZonaRegistry = 0;
 
-//--------------------------------------------------
-// VISUALISASI ZONA (hanya objek chart, tidak mengirim order)
-//--------------------------------------------------
-string NamaObjekZona(DataZona &zona) {
-   string arah=zona.bullish ? "BUY" : "SELL";
-   return StringFormat("A416_%I64u_%s_%d_%I64d",MagicNumber,arah,(int)zona.kategori,(long)zona.waktu);
-}
-void GambarZona(DataZona &zona) {
-   if(!TampilkanZonaChart || !ZonaRegistryValid(zona)) return;
-   string name=NamaObjekZona(zona);
-   datetime t1=zona.waktu;
-   int sec=PeriodSeconds(InpEntryTF); if(sec<=0) sec=300;
-   datetime t2=TimeCurrent()+sec*MathMax(1,ZonaExtendBars);
-   if(ObjectFind(0,name)<0) ObjectCreate(0,name,OBJ_RECTANGLE,0,t1,zona.batasAtas,t2,zona.batasBawah);
-   else { ObjectMove(0,name,0,t1,zona.batasAtas); ObjectMove(0,name,1,t2,zona.batasBawah); }
-   color clr=zona.bullish ? clrDarkSeaGreen : clrLightCoral;
-   ObjectSetInteger(0,name,OBJPROP_COLOR,clr);
-   ObjectSetInteger(0,name,OBJPROP_STYLE,STYLE_DOT);
-   ObjectSetInteger(0,name,OBJPROP_WIDTH,1);
-   ObjectSetInteger(0,name,OBJPROP_FILL,true);
-   ObjectSetInteger(0,name,OBJPROP_BACK,true);
-   ObjectSetInteger(0,name,OBJPROP_SELECTABLE,false);
-   string label=name+"_TXT";
-   string cat=(zona.kategori==ZONA_SUPER ? "SUPER" : (zona.kategori==ZONA_BIASA ? "BIASA" : "RETEST"));
-   string txt=cat+(zona.bullish ? " BUY" : " SELL")+" | CE50 "+DoubleToString(zona.ce50,_Digits);
-   if(ObjectFind(0,label)<0) ObjectCreate(0,label,OBJ_TEXT,0,t2,zona.ce50);
-   else ObjectMove(0,label,0,t2,zona.ce50);
-   ObjectSetString(0,label,OBJPROP_TEXT,txt);
-   ObjectSetInteger(0,label,OBJPROP_COLOR,clr);
-   ObjectSetInteger(0,label,OBJPROP_FONTSIZE,8);
-   ObjectSetInteger(0,label,OBJPROP_SELECTABLE,false);
+//==================================================
+// VISUALISASI ZONA
+//==================================================
+
+string NamaObjekZona(DataZona &zona)
+{
+   string arah = zona.bullish ? "BUY" : "SELL";
+
+   return StringFormat(
+      "A416_%I64u_%s_%d_%I64d",
+      MagicNumber,
+      arah,
+      (int)zona.kategori,
+      (long)zona.waktu
+   );
 }
 
-
- //--------------------------------------------------
-// REGISTRY ZONA - REVISED
-//--------------------------------------------------
+//==================================================
+// VALIDASI ZONA REGISTRY
+//==================================================
 
 bool ZonaRegistryValid(DataZona &zona)
 {
@@ -148,19 +165,94 @@ bool ZonaRegistryValid(DataZona &zona)
       zona.ce50 < zona.batasBawah ||
       zona.ce50 > zona.batasAtas ||
       zona.waktu <= 0)
+   {
       return false;
+   }
 
    if(zona.kategori != ZONA_SUPER &&
       zona.kategori != ZONA_BIASA &&
       zona.kategori != ZONA_RETEST)
+   {
       return false;
+   }
 
    return true;
 }
 
-//--------------------------------------------------
+//==================================================
+// NAMA OBJEK DAN GAMBAR ZONA
+//==================================================
+
+void GambarZona(DataZona &zona)
+{
+   if(!TampilkanZonaChart || !ZonaRegistryValid(zona))
+      return;
+
+   string name = NamaObjekZona(zona);
+
+   datetime t1 = zona.waktu;
+
+   int sec = PeriodSeconds(InpEntryTF);
+
+   if(sec <= 0)
+      sec = 300;
+
+   datetime t2 = TimeCurrent() + sec * MathMax(1, ZonaExtendBars);
+
+   if(ObjectFind(0, name) < 0)
+   {
+      ObjectCreate(
+         0,
+         name,
+         OBJ_RECTANGLE,
+         0,
+         t1,
+         zona.batasAtas,
+         t2,
+         zona.batasBawah
+      );
+   }
+   else
+   {
+      ObjectMove(0, name, 0, t1, zona.batasAtas);
+      ObjectMove(0, name, 1, t2, zona.batasBawah);
+   }
+
+   color clr = zona.bullish ? clrDarkSeaGreen : clrLightCoral;
+
+   ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, name, OBJPROP_STYLE, STYLE_DOT);
+   ObjectSetInteger(0, name, OBJPROP_WIDTH, 1);
+   ObjectSetInteger(0, name, OBJPROP_FILL, true);
+   ObjectSetInteger(0, name, OBJPROP_BACK, true);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+
+   string label = name + "_TXT";
+
+   string cat =
+      zona.kategori == ZONA_SUPER ? "SUPER" :
+      zona.kategori == ZONA_BIASA ? "BIASA" : "RETEST";
+
+   string txt = cat +
+                (zona.bullish ? " BUY" : " SELL") +
+                " | CE50 " +
+                DoubleToString(zona.ce50, _Digits);
+
+   if(ObjectFind(0, label) < 0)
+      ObjectCreate(0, label, OBJ_TEXT, 0, t2, zona.ce50);
+   else
+      ObjectMove(0, label, 0, t2, zona.ce50);
+
+   ObjectSetString(0, label, OBJPROP_TEXT, txt);
+   ObjectSetInteger(0, label, OBJPROP_COLOR, clr);
+   ObjectSetInteger(0, label, OBJPROP_FONTSIZE, 8);
+   ObjectSetInteger(0, label, OBJPROP_SELECTABLE, false);
+}
+
+//==================================================
 // CARI ZONA YANG SAMA
-//--------------------------------------------------
+//==================================================
+
 int CariZonaRegistry(DataZona &zona, double toleransiHarga)
 {
    if(!MathIsValidNumber(toleransiHarga) ||
@@ -168,7 +260,9 @@ int CariZonaRegistry(DataZona &zona, double toleransiHarga)
       JumlahZonaRegistry < 0 ||
       JumlahZonaRegistry > MAX_ZONA_REGISTRY ||
       !ZonaRegistryValid(zona))
+   {
       return -1;
+   }
 
    for(int i = 0; i < JumlahZonaRegistry; i++)
    {
@@ -178,15 +272,23 @@ int CariZonaRegistry(DataZona &zona, double toleransiHarga)
       if(RegistryZona[i].bullish != zona.bullish ||
          RegistryZona[i].kategori != zona.kategori ||
          RegistryZona[i].waktu != zona.waktu)
+      {
          continue;
+      }
 
-      if(MathAbs(RegistryZona[i].batasBawah -
-                 zona.batasBawah) > toleransiHarga)
+      if(MathAbs(
+         RegistryZona[i].batasBawah - zona.batasBawah
+      ) > toleransiHarga)
+      {
          continue;
+      }
 
-      if(MathAbs(RegistryZona[i].batasAtas -
-                 zona.batasAtas) > toleransiHarga)
+      if(MathAbs(
+         RegistryZona[i].batasAtas - zona.batasAtas
+      ) > toleransiHarga)
+      {
          continue;
+      }
 
       return i;
    }
@@ -194,14 +296,17 @@ int CariZonaRegistry(DataZona &zona, double toleransiHarga)
    return -1;
 }
 
-//--------------------------------------------------
+//==================================================
 // CARI SLOT KOSONG
-//--------------------------------------------------
+//==================================================
+
 int CariSlotKosongRegistry()
 {
    if(JumlahZonaRegistry < 0 ||
       JumlahZonaRegistry > MAX_ZONA_REGISTRY)
+   {
       return -1;
+   }
 
    for(int i = 0; i < JumlahZonaRegistry; i++)
    {
@@ -215,11 +320,111 @@ int CariSlotKosongRegistry()
    return -1;
 }
 
-//--------------------------------------------------
+//==================================================
+// SIMPAN SATU ZONA KE GLOBAL VARIABLE
+//==================================================
+
+bool SimpanSatuZonaRegistry(int indeks)
+{
+   if(RegistryGVPrefix == "" ||
+      indeks < 0 ||
+      indeks >= MAX_ZONA_REGISTRY)
+   {
+      return false;
+   }
+
+   string k = IntegerToString(indeks) + "_";
+
+   DataZona z = RegistryZona[indeks];
+
+   bool ok = true;
+
+   ok = (GlobalVariableSet(
+      RegistryGVPrefix + k + "v",
+      z.valid ? 1.0 : 0.0
+   ) > 0) && ok;
+
+   ok = (GlobalVariableSet(
+      RegistryGVPrefix + k + "b",
+      z.bullish ? 1.0 : 0.0
+   ) > 0) && ok;
+
+   ok = (GlobalVariableSet(
+      RegistryGVPrefix + k + "k",
+      (double)z.kategori
+   ) > 0) && ok;
+
+   ok = (GlobalVariableSet(
+      RegistryGVPrefix + k + "lo",
+      z.batasBawah
+   ) > 0) && ok;
+
+   ok = (GlobalVariableSet(
+      RegistryGVPrefix + k + "hi",
+      z.batasAtas
+   ) > 0) && ok;
+
+   ok = (GlobalVariableSet(
+      RegistryGVPrefix + k + "ce",
+      z.ce50
+   ) > 0) && ok;
+
+   ok = (GlobalVariableSet(
+      RegistryGVPrefix + k + "tm",
+      (double)z.waktu
+   ) > 0) && ok;
+
+   return ok;
+}
+
+//==================================================
+// SIMPAN SEMUA ZONA REGISTRY
+//==================================================
+
+bool SimpanSemuaZonaRegistry()
+{
+   if(RegistryGVPrefix == "" ||
+      JumlahZonaRegistry < 0 ||
+      JumlahZonaRegistry > MAX_ZONA_REGISTRY)
+   {
+      return false;
+   }
+
+   bool ok = true;
+
+   for(int i = 0; i < MAX_ZONA_REGISTRY; i++)
+   {
+      if(i < JumlahZonaRegistry)
+      {
+         if(!SimpanSatuZonaRegistry(i))
+            ok = false;
+      }
+      else
+      {
+         string k = IntegerToString(i) + "_";
+
+         GlobalVariableSet(RegistryGVPrefix + k + "v", 0.0);
+      }
+   }
+
+   if(!GlobalVariableSet(
+      RegistryGVPrefix + "count",
+      (double)JumlahZonaRegistry
+   ))
+   {
+      ok = false;
+   }
+
+   GlobalVariablesFlush();
+
+   return ok;
+}
+
+//==================================================
 // SIMPAN ZONA DENGAN ROLLBACK
-//--------------------------------------------------
-bool SimpanZonaRegistry(DataZona &zona,
-                        double toleransiHarga)
+//==================================================
+
+bool SimpanZonaRegistry(DataZona &zona, double toleransiHarga)
 {
    if(!ZonaRegistryValid(zona))
    {
@@ -253,9 +458,11 @@ bool SimpanZonaRegistry(DataZona &zona,
    }
 
    int jumlahLama = JumlahZonaRegistry;
+
    bool slotBaru = (idx == jumlahLama);
 
    DataZona zonaLama;
+
    if(!slotBaru)
       zonaLama = RegistryZona[idx];
 
@@ -270,173 +477,399 @@ bool SimpanZonaRegistry(DataZona &zona,
       JumlahZonaRegistry = jumlahLama;
 
       Print("Zone Registry: penyimpanan gagal, rollback dilakukan.");
+
       return false;
    }
 
    GambarZona(zona);
 
-   Print("Zone Registry: zona tersimpan pada slot ", idx,
-         ". Total=", JumlahZonaRegistry);
+   Print(
+      "Zone Registry: zona tersimpan pada slot ",
+      idx,
+      ". Total=",
+      JumlahZonaRegistry
+   );
 
    return true;
 }
 
-//--------------------------------------------------
-// SYMBOL RESOLVER: base XAUUSD + suffix terkontrol
-//--------------------------------------------------
-bool AkhiranSimbolDiizinkan(string suffix)
+//==================================================
+// PULIHKAN ZONA DARI GLOBAL VARIABLE
+//==================================================
+
+bool PulihkanZonaRegistry()
 {
-   if(suffix=="") return true;
-   string allowed[] = {"c","m",".pro",".raw",".ecn",".a",".i","_pro","-pro"};
-   string low=suffix; StringToLower(low);
-   for(int i=0;i<ArraySize(allowed);i++) if(low==allowed[i]) return true;
-   return false;
-}
-string CariSimbolKerja()
-{
-   string base=InpSymbol; StringToUpper(base);
-   if(base!="XAUUSD") return "";
-   string chart=_Symbol; string upper=chart; StringToUpper(upper);
-   if(StringFind(upper,"XAUUSD")==0 && AkhiranSimbolDiizinkan(StringSubstr(chart,6)) &&
-      SymbolSelect(chart,true)) return chart;
-   if(SymbolSelect(InpSymbol,true)) return InpSymbol;
-   int total=SymbolsTotal(false);
-   for(int i=0;i<total;i++) {
-      string candidate=SymbolName(i,false); string u=candidate; StringToUpper(u);
-      if(StringFind(u,"XAUUSD")!=0) continue;
-      if(!AkhiranSimbolDiizinkan(StringSubstr(candidate,6))) continue;
-      if(SymbolSelect(candidate,true)) return candidate;
+   if(RegistryGVPrefix == "")
+      return false;
+
+   JumlahZonaRegistry = 0;
+
+   if(!GlobalVariableCheck(RegistryGVPrefix + "count"))
+   {
+      Print("Zone Registry: belum ada data tersimpan.");
+
+      GlobalVariableSet(RegistryGVPrefix + "count", 0.0);
+      GlobalVariablesFlush();
+
+      return true;
    }
-   return "";
-}
-string BuatGVPrefix()
-{
-   long login=AccountInfoInteger(ACCOUNT_LOGIN);
-   string server=AccountInfoString(ACCOUNT_SERVER);
-   StringReplace(server," ","_");
-   string sym=SymbolKerja; StringReplace(sym,".","_"); StringReplace(sym,"-","_");
-   string key=StringFormat("A416_%I64d_%s_%s_%I64u",login,server,sym,MagicNumber);
-   if(StringLen(key)>60) key=StringSubstr(key,0,60);
-   return key;
-}
-bool SimpanGV(string nama,double nilai)
-{
-   if(GlobalVariableSet(GVPrefix+nama,nilai)==0) { Print("State save gagal: ",nama," err=",GetLastError()); return false; }
-   GlobalVariablesFlush(); return true;
-}
-bool BacaGV(string nama,double &nilai)
-{
-   if(!GlobalVariableCheck(GVPrefix+nama)) return false;
-   return GlobalVariableGet(GVPrefix+nama,nilai);
+
+   double countValue = 0.0;
+
+   if(!GlobalVariableGet(
+      RegistryGVPrefix + "count",
+      countValue
+   ))
+   {
+      return false;
+   }
+
+   if(!MathIsValidNumber(countValue) ||
+      countValue < 0 ||
+      countValue > MAX_ZONA_REGISTRY)
+   {
+      Print("Zone Registry: nilai count tidak valid.");
+      return false;
+   }
+
+   int count = (int)countValue;
+
+   for(int i = 0; i < MAX_ZONA_REGISTRY; i++)
+   {
+      RegistryZona[i].valid = false;
+      RegistryZona[i].bullish = false;
+      RegistryZona[i].kategori = ZONA_SUPER;
+      RegistryZona[i].batasBawah = 0.0;
+      RegistryZona[i].batasAtas = 0.0;
+      RegistryZona[i].ce50 = 0.0;
+      RegistryZona[i].waktu = 0;
+   }
+
+   for(int i = 0; i < count; i++)
+   {
+      string k = IntegerToString(i) + "_";
+
+      double v, b, kategori, lo, hi, ce, tm;
+
+      if(!GlobalVariableGet(RegistryGVPrefix + k + "v", v) ||
+         !GlobalVariableGet(RegistryGVPrefix + k + "b", b) ||
+         !GlobalVariableGet(RegistryGVPrefix + k + "k", kategori) ||
+         !GlobalVariableGet(RegistryGVPrefix + k + "lo", lo) ||
+         !GlobalVariableGet(RegistryGVPrefix + k + "hi", hi) ||
+         !GlobalVariableGet(RegistryGVPrefix + k + "ce", ce) ||
+         !GlobalVariableGet(RegistryGVPrefix + k + "tm", tm))
+      {
+         Print("Zone Registry: data slot ", i, " tidak lengkap.");
+         return false;
+      }
+
+      if(v < 0.5)
+         continue;
+
+      if(kategori < ZONA_SUPER || kategori > ZONA_RETEST)
+         return false;
+
+      DataZona z;
+
+      z.valid = true;
+      z.bullish = (b >= 0.5);
+      z.kategori = (KategoriZona)(int)kategori;
+      z.batasBawah = lo;
+      z.batasAtas = hi;
+      z.ce50 = ce;
+      z.waktu = (datetime)tm;
+
+      if(!ZonaRegistryValid(z))
+      {
+         Print("Zone Registry: zona rusak pada slot ", i);
+         return false;
+      }
+
+      RegistryZona[i] = z;
+
+      if(i >= JumlahZonaRegistry)
+         JumlahZonaRegistry = i + 1;
+
+      GambarZona(RegistryZona[i]);
+   }
+
+   Print(
+      "Zone Registry: pemulihan selesai. Zona aktif=",
+      JumlahZonaRegistry
+   );
+
+   return true;
 }
 
-//--------------------------------------------------
+//==================================================
+// NONAKTIFKAN ZONA
+//==================================================
+
+bool NonaktifkanZonaRegistry(int indeks)
+{
+   if(indeks < 0 || indeks >= JumlahZonaRegistry)
+      return false;
+
+   RegistryZona[indeks].valid = false;
+
+   if(!SimpanSemuaZonaRegistry())
+   {
+      Print("Zone Registry: gagal menyimpan status nonaktif.");
+      return false;
+   }
+
+   return true;
+}
+
+//==================================================
+// HITUNG ZONA AKTIF
+//==================================================
+
+int HitungZonaAktif(KategoriZona kategori, bool bullish)
+{
+   int jumlah = 0;
+
+   for(int i = 0; i < JumlahZonaRegistry; i++)
+   {
+      if(!RegistryZona[i].valid)
+         continue;
+
+      if(RegistryZona[i].kategori == kategori &&
+         RegistryZona[i].bullish == bullish)
+      {
+         jumlah++;
+      }
+   }
+
+   return jumlah;
+}
+
+//==================================================
+// SYMBOL RESOLVER
+//==================================================
+
+bool AkhiranSimbolDiizinkan(string suffix)
+{
+   if(suffix == "")
+      return true;
+
+   string allowed[] =
+   {
+      "c", "m", ".pro", ".raw", ".ecn",
+      ".a", ".i", "_pro", "-pro"
+   };
+
+   string low = suffix;
+   StringToLower(low);
+
+   for(int i = 0; i < ArraySize(allowed); i++)
+   {
+      if(low == allowed[i])
+         return true;
+   }
+
+   return false;
+}
+
+string CariSimbolKerja()
+{
+   string base = InpSymbol;
+   StringToUpper(base);
+
+   if(base != "XAUUSD")
+      return "";
+
+   string chart = _Symbol;
+   string upper = chart;
+
+   StringToUpper(upper);
+
+   if(StringFind(upper, "XAUUSD") == 0 &&
+      AkhiranSimbolDiizinkan(StringSubstr(chart, 6)) &&
+      SymbolSelect(chart, true))
+   {
+      return chart;
+   }
+
+   if(SymbolSelect(InpSymbol, true))
+      return InpSymbol;
+
+   int total = SymbolsTotal(false);
+
+   for(int i = 0; i < total; i++)
+   {
+      string candidate = SymbolName(i, false);
+
+      string u = candidate;
+      StringToUpper(u);
+
+      if(StringFind(u, "XAUUSD") != 0)
+         continue;
+
+      if(!AkhiranSimbolDiizinkan(StringSubstr(candidate, 6)))
+         continue;
+
+      if(SymbolSelect(candidate, true))
+         return candidate;
+   }
+
+   return "";
+}
+
+//==================================================
+// GLOBAL VARIABLE PREFIX
+//==================================================
+
+string BuatGVPrefix()
+{
+   long login = AccountInfoInteger(ACCOUNT_LOGIN);
+
+   string server = AccountInfoString(ACCOUNT_SERVER);
+   StringReplace(server, " ", "_");
+
+   string sym = SymbolKerja;
+
+   StringReplace(sym, ".", "_");
+   StringReplace(sym, "-", "_");
+
+   string key = StringFormat(
+      "A416_%I64d_%s_%s_%I64u",
+      login,
+      server,
+      sym,
+      MagicNumber
+   );
+
+   if(StringLen(key) > 60)
+      key = StringSubstr(key, 0, 60);
+
+   return key;
+}
+
+bool SimpanGV(string nama, double nilai)
+{
+   if(GlobalVariableSet(GVPrefix + nama, nilai) == 0)
+   {
+      Print(
+         "State save gagal: ",
+         nama,
+         " err=",
+         GetLastError()
+      );
+
+      return false;
+   }
+
+   GlobalVariablesFlush();
+
+   return true;
+}
+
+bool BacaGV(string nama, double &nilai)
+{
+   if(!GlobalVariableCheck(GVPrefix + nama))
+      return false;
+
+   return GlobalVariableGet(GVPrefix + nama, nilai);
+}
+
+//==================================================
 // INISIALISASI
-//--------------------------------------------------
-int OnInit() {
-   if(ModeOperasi!=SIGNAL_ONLY) {
-      Print("AUTO_TRADE BELUM TERSEDIA: execution engine, sizing lot berbasis SL, SL/TP broker-side, dan recovery order belum divalidasi. Gunakan SIGNAL_ONLY.");
+//==================================================
+
+int OnInit()
+{
+   if(ModeOperasi != SIGNAL_ONLY)
+   {
+      Print(
+         "AUTO_TRADE BELUM TERSEDIA. "
+         "Gunakan SIGNAL_ONLY sampai execution engine divalidasi."
+      );
+
       return INIT_PARAMETERS_INCORRECT;
    }
-   if(RiskNormalPct<=0 || RiskNormalPct>100 || RiskSuperPct<=0 || RiskSuperPct>100 ||
-      DailyLossLimitPct<=0 || DailyLossLimitPct>100 ||
-      MaxDailyLossPct<=0 || MaxDailyLossPct>100 ||
-      MaxRiskPerBasketPct<=0 || MaxRiskPerBasketPct>100 ||
-      SpreadMaxPoints<=0 || ATRPeriod<2 || MaxSuper<1 || MaxBiasa<1 ||
-      MaxRetest<1 || SwingLookback<1 || SwingScanBars<=SwingLookback*2 ||
-      DisplacementATRMultiplier<=0 || MinBodyToRangeRatio<=0 ||
-      MinBodyToRangeRatio>1 || MinFVG_ATR<0 || MaxPosisiEA<1 ||
-      DeviasiMaksimalPoints<0 || ProfitLockAktifUSD<0 || ProfitLockMundurUSD<0 || ZonaExtendBars<1) {
+
+   if(RiskNormalPct <= 0 || RiskNormalPct > 100 ||
+      RiskSuperPct <= 0 || RiskSuperPct > 100 ||
+      DailyLossLimitPct <= 0 || DailyLossLimitPct > 100 ||
+      MaxDailyLossPct <= 0 || MaxDailyLossPct > 100 ||
+      MaxRiskPerBasketPct <= 0 || MaxRiskPerBasketPct > 100 ||
+      SpreadMaxPoints <= 0 ||
+      ATRPeriod < 2 ||
+      MaxSuper < 1 ||
+      MaxBiasa < 1 ||
+      MaxRetest < 1 ||
+      SwingLookback < 1 ||
+      SwingScanBars <= SwingLookback * 2 ||
+      DisplacementATRMultiplier <= 0 ||
+      MinBodyToRangeRatio <= 0 ||
+      MinBodyToRangeRatio > 1 ||
+      MinFVG_ATR < 0 ||
+      MaxPosisiEA < 1 ||
+      DeviasiMaksimalPoints < 0 ||
+      ProfitLockAktifUSD < 0 ||
+      ProfitLockMundurUSD < 0 ||
+      ZonaExtendBars < 1)
+   {
       Print("ERROR: Parameter EA tidak valid.");
       return INIT_PARAMETERS_INCORRECT;
    }
-   SymbolKerja=CariSimbolKerja();
-   if(SymbolKerja=="") {
-      Print("ERROR: Simbol XAUUSD tidak ditemukan atau suffix tidak diizinkan. Chart=",_Symbol);
+
+   SymbolKerja = CariSimbolKerja();
+
+   if(SymbolKerja == "")
+   {
+      Print("ERROR: Simbol XAUUSD tidak ditemukan.");
       return INIT_FAILED;
    }
-   GVPrefix=BuatGVPrefix();
-   StatePersistenceOK=(GVPrefix!="");
-   // Prefix registry dibuat pendek agar setiap nama Global Variable tetap < 63 karakter.
-   RegistryGVPrefix=StringSubstr(GVPrefix,0,24)+"_ZR_";
-   if(!StatePersistenceOK || !PulihkanZonaRegistry()) {
-      Print("ERROR: state/Zone Registry tidak dapat dipulihkan; EA berhenti demi keamanan.");
+
+   GVPrefix = BuatGVPrefix();
+
+   StatePersistenceOK = (GVPrefix != "");
+
+   RegistryGVPrefix = StringSubstr(GVPrefix, 0, 24) + "_ZR_";
+
+   if(!StatePersistenceOK || !PulihkanZonaRegistry())
+   {
+      Print("ERROR: State/Zone Registry gagal dipulihkan.");
       return INIT_FAILED;
    }
-   Print("[SYMBOL] Chart=",_Symbol," | Symbol kerja=",SymbolKerja," | SAFE MODE aktif.");
-   atrHandle=iATR(SymbolKerja,InpEntryTF,ATRPeriod);
-   if(atrHandle==INVALID_HANDLE) {
+
+   Print(
+      "[SYMBOL] Chart=",
+      _Symbol,
+      " | Symbol kerja=",
+      SymbolKerja,
+      " | SAFE MODE aktif."
+   );
+
+   atrHandle = iATR(SymbolKerja, InpEntryTF, ATRPeriod);
+
+   if(atrHandle == INVALID_HANDLE)
+   {
       Print("ERROR: Gagal membuat indikator ATR.");
       return INIT_FAILED;
    }
+
    trade.SetExpertMagicNumber(MagicNumber);
-   Print("APlus V4.16.2 diinisialisasi. MODE SIGNAL_ONLY aktif; order entry/close dinonaktifkan.");
+
+   Print(
+      "APlus V4.16.2 diinisialisasi. "
+      "MODE SIGNAL_ONLY aktif."
+   );
+
    return INIT_SUCCEEDED;
 }
 
-void OnDeinit(const int reason) {
-   if(atrHandle!=INVALID_HANDLE) {
+void OnDeinit(const int reason)
+{
+   if(atrHandle != INVALID_HANDLE)
+   {
       IndicatorRelease(atrHandle);
-      atrHandle=INVALID_HANDLE;
+      atrHandle = INVALID_HANDLE;
    }
-   // Objek zona sengaja dipertahankan saat EA dilepas agar pengguna dapat meninjau chart.
-}
 
-//--------------------------------------------------
-// DATA PASAR DAN INDIKATOR
-//--------------------------------------------------
-bool ValidasiHargaDanSpread() {
-   MqlTick tick;
-   if(!SymbolInfoTick(SymbolKerja,tick) || tick.bid<=0 || tick.ask<=0 || tick.ask<tick.bid)
-      return false;
-   double point=SymbolInfoDouble(SymbolKerja,SYMBOL_POINT);
-   if(point<=0) return false;
-   return ((tick.ask-tick.bid)/point)<=SpreadMaxPoints;
-}
-
-bool DataCandleTersedia(ENUM_TIMEFRAMES tf) {
-   long synchronized=0;
-   if(!SeriesInfoInteger(SymbolKerja,tf,SERIES_SYNCHRONIZED,synchronized) || synchronized==0)
-      return false;
-   return Bars(SymbolKerja,tf)>=100;
-}
-
-bool ValidasiATR() {
-   if(atrHandle==INVALID_HANDLE || BarsCalculated(atrHandle)<ATRPeriod+2) return false;
-   double a[1];
-   if(CopyBuffer(atrHandle,0,1,1,a)!=1) return false;
-   return a[0]>0 && MathIsValidNumber(a[0]);
-}
-
-double AmbilATR(ENUM_TIMEFRAMES tf) {
-   int h=iATR(SymbolKerja,tf,ATRPeriod);
-   if(h==INVALID_HANDLE) return 0.0;
-   double b[1];
-   bool ok=BarsCalculated(h)>=ATRPeriod+2 && CopyBuffer(h,0,1,1,b)==1;
-   IndicatorRelease(h);
-   if(!ok || b[0]<=0 || !MathIsValidNumber(b[0])) return 0.0;
-   return b[0];
-}
-
-bool ValidasiDataIndikator(ENUM_TIMEFRAMES tf) {
-   if(!DataCandleTersedia(tf)) return false;
-   int h=iATR(SymbolKerja,tf,ATRPeriod);
-   if(h==INVALID_HANDLE) return false;
-   bool ok=false;
-   if(BarsCalculated(h)>=ATRPeriod+2) {
-      double b[2];
-      if(CopyBuffer(h,0,1,2,b)==2)
-         ok=b[0]>0 && b[1]>0 && MathIsValidNumber(b[0]) && MathIsValidNumber(b[1]);
-   }
-   IndicatorRelease(h);
-   if(!ok) Print("Validasi indikator gagal pada timeframe ",EnumToString(tf));
-   return ok;
-}
-
-bool ValidasiSemuaTimeframe() {
-   return ValidasiDataIndikator(PERIOD_M1) && ValidasiDataIndikator(PERIOD_M5) &&
-          ValidasiDataIndikator(PERIOD_M15) && ValidasiDataIndikator(PERIOD_H1) &&
-          ValidasiDataIndikator(PERIOD_H4) && ValidasiDataIndikator(PERIOD_D1);
+   // Objek zona dipertahankan saat EA dilepas.
 }
 
 //--------------------------------------------------
