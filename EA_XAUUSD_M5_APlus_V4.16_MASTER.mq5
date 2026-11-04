@@ -372,23 +372,48 @@ bool SimpanSemuaZonaRegistry()
 
 bool SimpanZonaRegistry(DataZona &z, double tol)
 {
-   if(!ZonaRegistryValid(z) || !MathIsValidNumber(tol) || tol<0) return false;
-   int idx=CariZonaRegistry(z,tol);
-   if(idx<0) idx=CariSlotKosongRegistry();
-   if(idx<0 || idx>=MAX_ZONA_REGISTRY) return false;
-   int oldCount=JumlahZonaRegistry;
-   bool isNew=(idx==oldCount);
-   DataZona old;
-   if(!isNew) old=RegistryZona[idx];
-   RegistryZona[idx]=z;
-   if(isNew) JumlahZonaRegistry++;
-   if(!SimpanSemuaZonaRegistry())
+   if(!ZonaRegistryValid(z) || !MathIsValidNumber(tol) || tol<0)
+   return false;
+
+int idx=CariZonaRegistry(z,tol);
+
+if(idx<0)
+   idx=CariSlotKosongRegistry();
+
+if(idx<0 || idx>=MAX_ZONA_REGISTRY)
+   return false;
+
+int oldCount=JumlahZonaRegistry;
+bool isNew=(idx==oldCount);
+
+DataZona old;
+
+if(!isNew)
+   old=RegistryZona[idx];
+
+RegistryZona[idx]=z;
+
+if(isNew)
+   JumlahZonaRegistry++;
+
+if(!SimpanSemuaZonaRegistry())
+{
+   if(isNew)
+   {
+      JumlahZonaRegistry=oldCount;
+   }
+   else
    {
       RegistryZona[idx]=old;
-      JumlahZonaRegistry=oldCount;
-      Print("Registry save gagal; perubahan dibatalkan.");
-      return false;
    }
+
+   Print("Registry save gagal; perubahan dibatalkan.");
+   return false;
+}
+
+GambarZona(z);
+return true;
+}
    GambarZona(z);
    return true;
 }
