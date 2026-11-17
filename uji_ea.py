@@ -1,28 +1,26 @@
-Berikut adalah panduan lengkap dan kode final "Dewa Trading XAUUSD Engine" yang menyatukan seluruh arsitektur yang sudah kita rancang (5 Core Engine: Auto Trendline Miring+Datar, Tick Exhaustion, Bid-Ask Pressure 70%, Dual-Layer Limit, Zero-Risk Pyramiding, Chaos & Whipsaw Hunter, House Money Vault, SL+ Kilat 2.5 Pips, serta Kokpit Visual Obsidian Institutional + HUD Panel).
-Ikuti urutan 7 bagian di bawah ini secara berurutan di MetaEditor (F4) pada file terbaru Anda.
+Berikut adalah panduan pemasangan Dewa Trading XAUUSD Engine lengkap dari Bagian 1 sampai Bagian 7 yang sudah disusun berurutan, diperbaiki sintaksnya (seluruh indeks array [] dan komentar order sudah seragam), serta disesuaikan dengan Pilihan 2 (keamanan risiko tetap terjaga).
+Ikuti urutan langkah dan patokan baris di bawah ini di MetaEditor (F4):
 
 BAGIAN 1: Penyesuaian Pagar Risiko & Kapasitas Posisi (Input Parameters)
 
-• Lokasi: Sekitar baris 92–95 dan baris 152 & 286.
-• Cara Mencari: Tekan Ctrl + F, cari DailyLossLimitPct.
-• Instruksi (Ganti Angka): Ubah nilai parameter risiko menjadi pengaturan optimal berikut agar duet SMC/ICT + Scalping + Zero-Risk Pyramiding berjalan lega dan aman:
-	• Baris 92–94:cpp
-input double DailyLossLimitPct   = 8.0;   // Batas rugi harian 8% (lebih aman melindungi modal)
-input double MaxRiskPerBasketPct = 8.0;   // Batas risiko aktif bersamaan 8% (ruang duet SMC + Scalp)
+• Lokasi: Sekitar baris 92–95 dan baris 152 pada file .mq5 Anda.
+• Cara Mencari: Tekan Ctrl + F, cari DailyLossLimitPct dan MaxPosisiEA.
+• Instruksi: Pertahankan batas risiko aman Anda (sesuai Pilihan 2 agar tidak over-exposure). Lewati baris ScalpMaxPosisi jika variabel tersebut memang tidak ada di file dasar Anda.
+cpp
+// Sekitar baris 92-94 (Pertahankan batas aman Anda)
+input double DailyLossLimitPct   = 8.0;   // Batas rugi harian 8% (atau sesuaikan dengan profil aman Anda)
+input double MaxRiskPerBasketPct = 6.0;   // Tetap 6% sesuai batas aman awal (Pilihan 2)
 input double MaxDailyLossPct     = 8.0;   // Diselaraskan ke 8%
-Gunakan kode dengan hati-hati.
-	• Baris 152 (Cari MaxPosisiEA):cpp
-input int MaxPosisiEA = 12;   // Kapasitas 12 posisi (menampung Dual-Layer Limit + Zero-Risk Pyramiding)
-Gunakan kode dengan hati-hati.
-	• Baris 286 (Cari ScalpMaxPosisi):cpp
-input int ScalpMaxPosisi = 3; // 2 lapis utama + 1 layer Zero-Risk Pyramiding
+
+// Sekitar baris 152 (Cari MaxPosisiEA)
+input int    MaxPosisiEA         = 10;    // Tetap 10 posisi maksimal agar margin terjaga
 Gunakan kode dengan hati-hati.
 
-BAGIAN 2: Upgrade Kokpit Visual Obsidian Institutional (TerapkanTemaChart & Warna Zona)
+BAGIAN 2: Upgrade Kokpit Visual Obsidian Institutional
 
-• Lokasi: Sekitar baris 546–662.
+• Lokasi: Sekitar baris 546–662 pada file .mq5 Anda.
 • Cara Mencari: Tekan Ctrl + F, ketik color WarnaKotakZona.
-• Instruksi (Ganti 2 Fungsi): Ganti fungsi WarnaKotakZona dan TerapkanTemaChart dengan tema Obsidian Dark Pro (latar gelap elegan, candle hijau zamrud & merah koral terang, tanpa grid) berikut:
+• Instruksi (Ganti Fungsi): Ganti seluruh fungsi WarnaKotakZona dan TerapkanTemaChart yang lama dengan kode di bawah ini:
 cpp
 // Kotak zona: Obsidian Slate untuk BUY, Dark Maroon untuk SELL
 color WarnaKotakZona(DataZona &z)
@@ -53,13 +51,12 @@ void TerapkanTemaChart()
    ChartRedraw(0);
 }
 Gunakan kode dengan hati-hati.
-(Opsional: Di dalam fungsi GambarZonaIdx sekitar baris 742, ubah warna teks label zona agar menyala terang di latar gelap: AturTampilanLabelZona(label, teksZona, (z.bullish ? clrAqua : clrGold), ANCHOR_CENTER);).
 
-BAGIAN 3: Pasang Mesin Utama Dewa Sniper 96% (Auto Trendline, Order Flow, Chaos Hunter, & Deteksi Range)
+BAGIAN 3: Mesin Utama Dewa Sniper (Auto Trendline, Order Flow, Chaos Hunter, & Deteksi Range)
 
-• Lokasi: Sekitar baris 1470–1518.
+• Lokasi: Sekitar baris 1470–1518 pada file .mq5 Anda.
 • Cara Mencari: Tekan Ctrl + F, ketik bool g_ScalpModeRangeTerkunci (atau bool MS_M1SedangRange()).
-• Instruksi (Hapus & Ganti): Blok dan hapus variabel g_ScalpModeRangeTerkunci, g_WaktuKunciScalpMode, serta seluruh isi fungsi MS_M1SedangRange() lama, lalu ganti dengan mesin lengkap 5 Core di bawah ini:
+• Instruksi (Ganti Variabel & Fungsi): Blok dan hapus variabel g_ScalpModeRangeTerkunci, g_WaktuKunciScalpMode, serta seluruh isi fungsi MS_M1SedangRange() lama, lalu tempelkan kode di bawah ini:
 cpp
 // =========================================================================
 // DEWA TRADING XAUUSD ENGINE: 5-CORE ARCHITECTURE
@@ -80,8 +77,8 @@ struct TrendlineChannel
 TrendlineChannel g_TL_M1;
 
 // Memori Tick Real-Time (Bid-Ask Pressure & Tick Exhaustion)
-double   g_TickPrices;
-datetime g_TickTimes;
+double   g_TickPrices[60];
+datetime g_TickTimes[60];
 int      g_TickHead = 0;
 double   g_AvgSpreadPts = 0.0;
 double   g_LastUpPressure = 50.0;
@@ -186,8 +183,8 @@ bool TL_Bangun(ENUM_TIMEFRAMES tf, int scanBars, int lb, TrendlineChannel &out)
    int got = CopyRates(SymbolKerja, tf, 0, scanBars + lb + 5, r);
    if(got < lb * 2 + 10) return false;
 
-   int idxH = {-1, -1}, nh = 0;
-   int idxL = {-1, -1}, nl = 0;
+   int idxH[2] = {-1, -1}, nh = 0;
+   int idxL[2] = {-1, -1}, nl = 0;
 
    for(int i = lb + 1; i <= scanBars && i + lb < got; i++)
    {
@@ -209,10 +206,10 @@ bool TL_Bangun(ENUM_TIMEFRAMES tf, int scanBars, int lb, TrendlineChannel &out)
    }
    if(nh < 2 || nl < 2) return false;
 
-   out.tA1 = r[idxH].time; out.pA1 = r[idxH].high;
-   out.tA2 = r[idxH].time; out.pA2 = r[idxH].high;
-   out.tB1 = r[idxL].time; out.pB1 = r[idxL].low;
-   out.tB2 = r[idxL].time; out.pB2 = r[idxL].low;
+   out.tA1 = r[idxH[1]].time; out.pA1 = r[idxH[1]].high;
+   out.tA2 = r[idxH[0]].time; out.pA2 = r[idxH[0]].high;
+   out.tB1 = r[idxL[1]].time; out.pB1 = r[idxL[1]].low;
+   out.tB2 = r[idxL[0]].time; out.pB2 = r[idxL[0]].low;
 
    if(MathAbs(out.pA2 - out.pA1) < V24_Pip(4.0) && MathAbs(out.pB2 - out.pB1) < V24_Pip(4.0))
    {
@@ -224,7 +221,7 @@ bool TL_Bangun(ENUM_TIMEFRAMES tf, int scanBars, int lb, TrendlineChannel &out)
    }
    else out.isFlat = false;
 
-   datetime nowT = r.time;
+   datetime nowT = r[0].time;
    double upNow = TL_HargaPadaWaktu(out.tA1, out.pA1, out.tA2, out.pA2, nowT);
    double dnNow = TL_HargaPadaWaktu(out.tB1, out.pB1, out.tB2, out.pB2, nowT);
    if(upNow <= dnNow + V24_Pip(5.0)) return false;
@@ -330,9 +327,9 @@ bool MS_M1SedangRange()
 
    bool diDalamLorong = (c1 <= up1 + V24_Pip(2.0) && c1 >= dn1 - V24_Pip(2.0));
    datetime now = TimeCurrent();
-   if(g_WaktuKunciScalpMode == 0 || (diDalamLorong != g_ScalpModeRangeTerkunci && now - g_WaktuKunciScalpMode >= 60))
-   {
 Gunakan kode dengan hati-hati.
+if(g_WaktuKunciScalpMode == 0 || (diDalamLorong != g_ScalpModeRangeTerkunci && now - g_WaktuKunciScalpMode >= 60))
+{
 g_ScalpModeRangeTerkunci = diDalamLorong;
 g_WaktuKunciScalpMode = now;
 }
@@ -341,8 +338,8 @@ return g_ScalpModeRangeTerkunci;
 
 ---
 
-#### BAGIAN 4: Integrasi Konfluensi Trendline HTF ke SMC/ICT (`EksekusiSatuSinyal`)
-* **Lokasi:** Sekitar baris **1105–1115** di dalam fungsi `EksekusiSatuSinyal`.
+### BAGIAN 4: Integrasi Konfluensi Trendline HTF ke SMC/ICT (`EksekusiSatuSinyal`)
+* **Lokasi:** Sekitar **baris 1105–1115** di dalam fungsi `EksekusiSatuSinyal`.
 * **Cara Mencari:** Tekan `Ctrl + F`, ketik `if(V24_TrendDir()==(bullish?1:-1)) v24sk++;`.
 * **Instruksi (Tambahkan 1 Baris):** Tempelkan 1 baris di bawahnya:
 
@@ -352,9 +349,9 @@ return g_ScalpModeRangeTerkunci;
 
 BAGIAN 5: Mesin Eksekusi Utama Dewa Sniper (V24_JagaSiklusReverse)
 
-• Lokasi: Sekitar baris 1803–1946.
+• Lokasi: Sekitar baris 1803–1946 pada file .mq5 Anda.
 • Cara Mencari: Tekan Ctrl + F, ketik void V24_JagaSiklusReverse().
-• Instruksi (Ganti Seluruh Fungsi): Blok dan ganti seluruh isi fungsi V24_JagaSiklusReverse() (sampai tepat di atas void V24_KelolaSemua()) dengan kode di bawah ini:
+• Instruksi (Ganti Seluruh Fungsi): Blok dan ganti seluruh isi fungsi V24_JagaSiklusReverse() (sampai tepat di atas void V24_KelolaSemua()) dengan kode bersih berikut (indeks array rsiArr[0] & gM1[1] sudah diperbaiki, komentar order diseragamkan, dan cek risiko basket dikembalikan):
 cpp
 void V24_JagaSiklusReverse()
 {
@@ -372,7 +369,7 @@ void V24_JagaSiklusReverse()
    DS_CatatTick(tick.bid, (double)SymbolInfoInteger(SymbolKerja, SYMBOL_SPREAD));
    if(DS_SpreadShock()) return;
 
-   // 2. Gerbang Pengaman: Berita, Spread, & House Money Vault / Daily Loss
+   // 2. Gerbang Pengaman: Berita, Spread, House Money Vault, Daily Loss, & Basket Risk
    datetime nowJ    = TimeTradeServer(); if(nowJ <= 0) nowJ = TimeCurrent();
    bool newsOK      = NewsFilterBolehLanjut();
    bool modeNewsVIP = false;
@@ -395,8 +392,10 @@ void V24_JagaSiklusReverse()
       double baseD      = (MetrikAwalHariEA > 0.0 ? MetrikAwalHariEA : balR);
       double limitMoney = baseD * MathMin(DailyLossLimitPct, MaxDailyLossPct) / 100.0;
       if(rl != EMPTY_VALUE && rl < 0.0 && -rl >= limitMoney) { HapusPendingInitScalp(); return; }
-      // Kunci House Money Vault: jika profit harian turun menyentuh brankas terkunci, hentikan agresivitas baru
       if(g_VaultLockedUSD > 0.0 && V24_ProfitHarian() <= g_VaultLockedUSD) { HapusPendingInitScalp(); return; }
+
+      double br = HitungRisikoTerbukaEA();
+      if(balR > 0.0 && br >= 0.0 && (br / balR * 100.0) >= MaxRiskPerBasketPct) { HapusPendingInitScalp(); return; }
    }
 
    bool konteksM1   = MS_SiapkanKonteksM1();
@@ -408,11 +407,8 @@ void V24_JagaSiklusReverse()
    double stl = (double)MathMax(SymbolInfoInteger(SymbolKerja, SYMBOL_TRADE_STOPS_LEVEL),
                                 SymbolInfoInteger(SymbolKerja, SYMBOL_TRADE_FREEZE_LEVEL)) * pt;
 
-   // 3. Cek Posisi Aktif & ZERO-RISK PYRAMIDING (Tumpuk Posisi Gratis di Atas SL+)
+   // 3. Cek Posisi Aktif (Pyramiding dinonaktifkan sesuai Pilihan 2)
    int adaPosisiScalp = 0;
-   bool adaSLPlusAktif = false, arahSLPlusBuy = true;
-   double garisSLPlus = 0.0, volPyra = 0.0;
-
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong tk = PositionGetTicket(i);
@@ -421,36 +417,6 @@ void V24_JagaSiklusReverse()
          StringFind(PositionGetString(POSITION_COMMENT), "|S=5|") >= 0)
       {
          adaPosisiScalp++;
-         bool pBuy = ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
-         double pOp = PositionGetDouble(POSITION_PRICE_OPEN);
-         double pSl = PositionGetDouble(POSITION_SL);
-         if(pSl > 0.0 && (pBuy ? pSl > pOp : pSl < pOp))
-         {
-            adaSLPlusAktif = true;
-            arahSLPlusBuy = pBuy;
-            garisSLPlus = pSl;
-            volPyra = PositionGetDouble(POSITION_VOLUME);
-         }
-      }
-   }
-
-   static datetime lastPyra = 0;
-   if(!g_MarketChaos && adaPosisiScalp == 1 && adaSLPlusAktif && TimeCurrent() - lastPyra >= 12 && HitungPosisiEA() + 1 <= MaxPosisiEA)
-   {
-      double upPress = 50.0; int t3s = 0, tPrev = 0;
-      DS_AnalisaOrderFlow(upPress, t3s, tPrev);
-      double enPyra = (arahSLPlusBuy ? tick.ask : tick.bid);
-      bool amanJarak = (arahSLPlusBuy ? (enPyra - garisSLPlus >= V24_Pip(5.0) && upPress >= 68.0)
-                                      : (garisSLPlus - enPyra >= V24_Pip(5.0) && upPress <= 32.0));
-      if(amanJarak && ValidasiVolumeOrder(volPyra))
-      {
-         bool okP = (arahSLPlusBuy ? trade.Buy(volPyra, SymbolKerja, 0.0, garisSLPlus, 0.0, "PYRA_FREE_|S=5|_1")
-                                   : trade.Sell(volPyra, SymbolKerja, 0.0, garisSLPlus, 0.0, "PYRA_FREE_|S=5|_1"));
-         if(okP)
-         {
-            lastPyra = TimeCurrent();
-            Print("ZERO_RISK_PYRAMIDING | Layer gratis dibuka di atas SL+ ", DoubleToString(garisSLPlus, _Digits));
-         }
       }
    }
 
@@ -468,7 +434,7 @@ void V24_JagaSiklusReverse()
    double rsiArr[]; ArraySetAsSeries(rsiArr, true);
    int ix1 = IndexTimeframe(PERIOD_M1);
    double rsi1 = 50.0;
-   if(ix1 >= 0 && CopyBuffer(rsiHandles[ix1], 0, 1, 1, rsiArr) == 1) rsi1 = rsiArr;
+   if(ix1 >= 0 && CopyBuffer(rsiHandles[ix1], 0, 1, 1, rsiArr) == 1) rsi1 = rsiArr[0];
 
    datetime tNow = iTime(SymbolKerja, PERIOD_M1, 0);
    double garisAtas = 0.0, garisBawah = 0.0;
@@ -483,7 +449,7 @@ void V24_JagaSiklusReverse()
    double open0 = iOpen(SymbolKerja, PERIOD_M1, 0);
 
    // =========================================================================
-   // OTAK KE-5: CHAOS HUNTER (Jika Market Ngamuk Nggak Jelas -> Climax Sniper)
+   // OTAK KE-5: CHAOS HUNTER (Climax Sniper dengan Validasi Risiko)
    // =========================================================================
    if(g_MarketChaos && !modeNewsVIP)
    {
@@ -492,17 +458,16 @@ void V24_JagaSiklusReverse()
       static datetime lastChaosFire = 0;
       if(TimeCurrent() - lastChaosFire < 15) return;
 
-      // Hanya tembak saat terjadi Tick Exhaustion + RSI ekstrem (< 22 atau > 78) + Tekanan balik >= 72%
       double slChaos = MathMax(V24_Pip(12.0), stl + 2.0 * pt);
       if(tickExhaustion && rsi1 <= 22.0 && upPress >= 72.0 && tick.bid > open0)
       {
          double slB = AlignHargaTick(tick.ask - slChaos, false);
          double tpB = AlignHargaTick(tick.ask + V24_Pip(14.0), false);
          double volB = 0.0; string infB = "";
-         if(V24_Lot(true, tick.ask, slB, 5, volB, infB) && trade.Buy(volB, SymbolKerja, 0.0, slB, tpB, "CHAOS_CLIMAX_B_|S=5|_0"))
+         if(V24_Lot(true, tick.ask, slB, 5, volB, infB) && trade.Buy(volB, SymbolKerja, 0.0, slB, tpB, "CHAOS_CLIMAX_B|S=5|0"))
          {
             lastChaosFire = TimeCurrent();
-            Print("CHAOS_HUNTER_BUY | Menyergap titik klimaks market ngamuk di ", DoubleToString(tick.ask, _Digits));
+            Print("CHAOS_HUNTER_BUY | Menyergap titik klimaks di ", DoubleToString(tick.ask, _Digits));
          }
       }
       else if(tickExhaustion && rsi1 >= 78.0 && upPress <= 28.0 && tick.bid < open0)
@@ -510,10 +475,10 @@ void V24_JagaSiklusReverse()
          double slS = AlignHargaTick(tick.bid + slChaos, true);
          double tpS = AlignHargaTick(tick.bid - V24_Pip(14.0), true);
          double volS = 0.0; string infS = "";
-         if(V24_Lot(false, tick.bid, slS, 5, volS, infS) && trade.Sell(volS, SymbolKerja, 0.0, slS, tpS, "CHAOS_CLIMAX_S_|S=5|_0"))
+         if(V24_Lot(false, tick.bid, slS, 5, volS, infS) && trade.Sell(volS, SymbolKerja, 0.0, slS, tpS, "CHAOS_CLIMAX_S|S=5|0"))
          {
             lastChaosFire = TimeCurrent();
-            Print("CHAOS_HUNTER_SELL | Menyergap titik klimaks market ngamuk di ", DoubleToString(tick.bid, _Digits));
+            Print("CHAOS_HUNTER_SELL | Menyergap titik klimaks di ", DoubleToString(tick.bid, _Digits));
          }
       }
       return;
@@ -526,7 +491,6 @@ void V24_JagaSiklusReverse()
    {
       HapusSemuaPendingReverseScalp();
 
-      // Hitung Skor Konfluensi (Wajib >= 3 Bukti untuk Tembak Instan)
       int buktiBuy = 1;
       if(DS_DekatAngkaPsikologis(garisBawah)) buktiBuy++;
       if(rsi1 <= 35.0) buktiBuy++;
@@ -551,7 +515,7 @@ void V24_JagaSiklusReverse()
             double volB = 0.0; string infB = "";
             if(V24_Lot(true, tick.ask, slB, 5, volB, infB) && tpB > tick.ask + stl)
             {
-               if(trade.Buy(volB, SymbolKerja, 0.0, slB, tpB, "DEWA_SNIPER_B_|S=5|_0"))
+               if(trade.Buy(volB, SymbolKerja, 0.0, slB, tpB, "DEWA_SNIPER_B|S=5|0"))
                {
                   lastInstanRange = TimeCurrent();
                   HapusPendingInitScalp();
@@ -567,47 +531,51 @@ void V24_JagaSiklusReverse()
             double volS = 0.0; string infS = "";
             if(V24_Lot(false, tick.bid, slS, 5, volS, infS) && tpS < tick.bid - stl)
             {
-               if(trade.Sell(volS, SymbolKerja, 0.0, slS, tpS, "DEWA_SNIPER_S_|S=5|_0"))
+               if(trade.Sell(volS, SymbolKerja, 0.0, slS, tpS, "DEWA_SNIPER_S|S=5|0"))
                {
                   lastInstanRange = TimeCurrent();
                   HapusPendingInitScalp();
                   return;
+               }
+            }
+         }
+      }
+
+      // Smart Anchor Dual-Layer Limit (Komentar Order Sudah Diseragamkan)
+      double spr       = tick.ask - tick.bid;
+      double bufJemput = V24_Pip(2.0) + spr;
+      double buyLim1   = AlignHargaTick(garisBawah + bufJemput, true);
+      double buyLim2   = AlignHargaTick(garisBawah - V24_Pip(4.5), true);
+      double sellLim1  = AlignHargaTick(garisAtas - bufJemput, false);
+      double sellLim2  = AlignHargaTick(garisAtas + V24_Pip(4.5), false);
+      if(sellLim1 - buyLim1 < V24_Pip(8.0)) return;
+
+      double slDistL = MathMax(V24_Pip(12.0), stl + 2.0 * pt);
+      double slBuyL  = AlignHargaTick(buyLim2 - slDistL, false);
+      double tpBuyL  = AlignHargaTick(sellLim1, false);
+      double slSellL = AlignHargaTick(sellLim2 + slDistL, true);
+      double tpSellL = AlignHargaTick(buyLim1, true);
+
+      datetime nowS = TimeTradeServer(); if(nowS <= 0) nowS = TimeCurrent();
+      ulong tkBL1 = 0, tkBL2 = 0, tkSL1 = 0, tkSL2 = 0;
+      for(int js = OrdersTotal() - 1; js >= 0; js--)
+      {
+         ulong ots = OrderGetTicket(js);
+         if(ots == 0 || OrderGetString(ORDER_SYMBOL) != SymbolKerja || (ulong)OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
+         string cms = OrderGetString(ORDER_COMMENT);
+         if(nowS - (datetime)OrderGetInteger(ORDER_TIME_SETUP) >= 1800 && StringFind(cms, "REV_INIT_") == 0)
+         {
+            trade.OrderDelete(ots);
+            continue;
+         }
+         if(cms == "REV_INIT_BL|S=5|0") tkBL1 = ots;
+         if(cms == "REV_INIT_BL|S=5|1") tkBL2 = ots;
+         if(cms == "REV_INIT_SL|S=5|0") tkSL1 = ots;
+         if(cms == "REV_INIT_SL|S=5|1") tkSL2 = ots;
+      }
+
+      static datetime lastPasangLimit = 0;
 Gunakan kode dengan hati-hati.
-}
-}
-}
-}
-// Smart Anchor Dual-Layer Limit (Lapis 1 di dinding Trendline, Lapis 2 di area Stop Hunt 4.5 pips luar garis)
-double spr       = tick.ask - tick.bid;
-double bufJemput = V24_Pip(2.0) + spr;
-double buyLim1   = AlignHargaTick(garisBawah + bufJemput, true);
-double buyLim2   = AlignHargaTick(garisBawah - V24_Pip(4.5), true);
-double sellLim1  = AlignHargaTick(garisAtas - bufJemput, false);
-double sellLim2  = AlignHargaTick(garisAtas + V24_Pip(4.5), false);
-if(sellLim1 - buyLim1 < V24_Pip(8.0)) return;
-double slDistL = MathMax(V24_Pip(12.0), stl + 2.0 * pt);
-double slBuyL  = AlignHargaTick(buyLim2 - slDistL, false);
-double tpBuyL  = AlignHargaTick(sellLim1, false);
-double slSellL = AlignHargaTick(sellLim2 + slDistL, true);
-double tpSellL = AlignHargaTick(buyLim1, true);
-datetime nowS = TimeTradeServer(); if(nowS <= 0) nowS = TimeCurrent();
-ulong tkBL1 = 0, tkBL2 = 0, tkSL1 = 0, tkSL2 = 0;
-for(int js = OrdersTotal() - 1; js >= 0; js--)
-{
-ulong ots = OrderGetTicket(js);
-if(ots == 0 || OrderGetString(ORDER_SYMBOL) != SymbolKerja || (ulong)OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
-string cms = OrderGetString(ORDER_COMMENT);
-if(nowS - (datetime)OrderGetInteger(ORDER_TIME_SETUP) >= 1800 && StringFind(cms, "REV_INIT_") == 0)
-{
-trade.OrderDelete(ots);
-continue;
-}
-if(cms == "REV_INIT_BL_|S=5|0") tkBL1 = ots;
-if(cms == "REV_INIT_BL|S=5|1") tkBL2 = ots;
-if(cms == "REV_INIT_SL|S=5|0") tkSL1 = ots;
-if(cms == "REV_INIT_SL|S=5|_1") tkSL2 = ots;
-}
-static datetime lastPasangLimit = 0;
 if(TimeCurrent() - lastPasangLimit < 2) return;
 double volL = 0.0; string infoL = "";
 if(!V24_Lot(true, buyLim1, slBuyL, 5, volL, infoL)) return;
@@ -615,17 +583,17 @@ double volHalf = NormalisasiVolumeBawah(volL * 0.5);
 if(volHalf < SymbolInfoDouble(SymbolKerja, SYMBOL_VOLUME_MIN)) volHalf = volL;
 if(HitungPosisiEA() + 2 > MaxPosisiEA) return;
 if(tkBL1 == 0 && buyLim1 < tick.ask - stl - pt)
-if(trade.BuyLimit(volHalf, buyLim1, SymbolKerja, slBuyL, tpBuyL, ORDER_TIME_GTC, 0, "REV_INIT_BL_|S=5|0")) lastPasangLimit = TimeCurrent();
+if(trade.BuyLimit(volHalf, buyLim1, SymbolKerja, slBuyL, tpBuyL, ORDER_TIME_GTC, 0, "REV_INIT_BL|S=5|0")) lastPasangLimit = TimeCurrent();
 if(tkBL2 == 0 && buyLim2 < tick.ask - stl - pt)
-if(trade.BuyLimit(volHalf, buyLim2, SymbolKerja, slBuyL, tpBuyL, ORDER_TIME_GTC, 0, "REV_INIT_BL|S=5|_1")) lastPasangLimit = TimeCurrent();
+if(trade.BuyLimit(volHalf, buyLim2, SymbolKerja, slBuyL, tpBuyL, ORDER_TIME_GTC, 0, "REV_INIT_BL|S=5|1")) lastPasangLimit = TimeCurrent();
 if(tkSL1 == 0 && sellLim1 > tick.bid + stl + pt)
-if(trade.SellLimit(volHalf, sellLim1, SymbolKerja, slSellL, tpSellL, ORDER_TIME_GTC, 0, "REV_INIT_SL_|S=5|0")) lastPasangLimit = TimeCurrent();
+if(trade.SellLimit(volHalf, sellLim1, SymbolKerja, slSellL, tpSellL, ORDER_TIME_GTC, 0, "REV_INIT_SL|S=5|0")) lastPasangLimit = TimeCurrent();
 if(tkSL2 == 0 && sellLim2 > tick.bid + stl + pt)
-if(trade.SellLimit(volHalf, sellLim2, SymbolKerja, slSellL, tpSellL, ORDER_TIME_GTC, 0, "REV_INIT_SL|S=5|_1")) lastPasangLimit = TimeCurrent();
+if(trade.SellLimit(volHalf, sellLim2, SymbolKerja, slSellL, tpSellL, ORDER_TIME_GTC, 0, "REV_INIT_SL|S=5|1")) lastPasangLimit = TimeCurrent();
 return;
 }
 // =========================================================================
-// MODE 2: TRENDING / BREAKOUT / SQUEEZE -> EKSEKUSI INSTAN + ORDER STOP
+// MODE 2: TRENDING / BREAKOUT / SQUEEZE -> EKSEKUSI INSTAN
 // =========================================================================
 HapusPendingInitScalp();
 static datetime lastTrendFire = 0;
@@ -634,8 +602,8 @@ double ema8  = MS_EMA(PERIOD_M1, 8, 0);
 double ema21 = MS_EMA(PERIOD_M1, 21, 0);
 if(ema8 <= 0.0 || ema21 <= 0.0) return;
 int dirM5 = MS_DirM5();
-bool arahBuy  = (ema8 > ema21 && (modeNewsVIP || dirM5 >= 0) && gM1.close > gM1.open && tick.ask > gM1.high && upPress >= 68.0);
-bool arahSell = (ema8 < ema21 && (modeNewsVIP || dirM5 <= 0) && gM1.close < gM1.open && tick.bid < gM1.low  && upPress <= 32.0);
+bool arahBuy  = (ema8 > ema21 && (modeNewsVIP || dirM5 >= 0) && gM1[1].close > gM1[1].open && tick.ask > gM1[1].high && upPress >= 68.0);
+bool arahSell = (ema8 < ema21 && (modeNewsVIP || dirM5 <= 0) && gM1[1].close < gM1[1].open && tick.bid < gM1[1].low  && upPress <= 32.0);
 if(!arahBuy && !arahSell) return;
 bool bull = arahBuy;
 double entry = (bull ? tick.ask : tick.bid);
@@ -643,13 +611,13 @@ double jarakSL = MathMax(V24_Pip(ScalpSLMinPips), stl + 2.0 * pt);
 double sl = AlignHargaTick(bull ? entry - jarakSL : entry + jarakSL, !bull);
 double vol = 0.0; string info = "";
 if(!V24_Lot(bull, entry, sl, 5, vol, info)) return;
-int jumlah = MathMax(1, ScalpMaxPosisi - 1); // Sisakan 1 slot untuk Zero-Risk Pyramiding
+int jumlah = 1; // Aman sesuai Pilihan 2
 if(HitungPosisiEA() + jumlah > MaxPosisiEA) return;
 int berhasil = 0;
 for(int k = 0; k < jumlah; k++)
 {
-bool ok = (bull ? trade.Buy(vol, SymbolKerja, 0.0, sl, 0.0, "DEWA_TREND_|S=5|" + IntegerToString(k))
-: trade.Sell(vol, SymbolKerja, 0.0, sl, 0.0, "DEWA_TREND|S=5|_" + IntegerToString(k)));
+bool ok = (bull ? trade.Buy(vol, SymbolKerja, 0.0, sl, 0.0, "DEWA_TREND|S=5|" + IntegerToString(k))
+: trade.Sell(vol, SymbolKerja, 0.0, sl, 0.0, "DEWA_TREND|S=5|" + IntegerToString(k)));
 if(ok)
 {
 berhasil++;
@@ -675,10 +643,10 @@ Print("DEWA_TREND_ENTRY | ", (bull ? "BUY" : "SELL"), " ", berhasil, "x lot=", D
 
 ---
 
-#### BAGIAN 6: Asymmetric Breakeven Shield (+2.5 Pips) & Midline Partial Cash-Out (`V24_KelolaSemua`)
-* **Lokasi:** Sekitar baris **2005–2040** di dalam fungsi `V24_KelolaSemua()`.
+### BAGIAN 6: Asymmetric Breakeven Shield (+2.5 Pips) (`V24_KelolaSemua`)
+* **Lokasi:** Sekitar **baris 2005–2040** di dalam fungsi `V24_KelolaSemua()`.
 * **Cara Mencari:** Tekan `Ctrl + F`, ketik `if(scalp)`.
-* **Instruksi (Ganti Blok `if(scalp)`):** Ganti blok `if(scalp) { ... continue; }` dengan kode di bawah ini agar posisi terkunci **SL+ (+0.6 pip)** begitu profit **+2.5 pips**, mencairkan 50% tunai di tengah jalan (*Midline Cash-Out*), dan mempercepat *trailing* saat harga melesat:
+* **Instruksi (Ganti Blok `if(scalp)`):** Ganti blok `if(scalp) { ... continue; }` dengan kode di bawah ini (mengaktifkan pengunci **SL+ +0.6 pip di profit +2.5 pips**, tanpa *Midline Partial Cash-Out* sesuai Pilihan 2):
 
 ```cpp
       if(scalp)
@@ -686,29 +654,10 @@ Print("DEWA_TREND_ENTRY | ", (bull ? "BUY" : "SELL"), " ", berhasil, "x lot=", D
          double profitPips = (buy ? (px - opn) : (opn - px)) / g_pip;
          double slTerbaru  = sl;
 
-         // 1. Midline Partial Cash-Out: Jika punya TP dan profit sudah mencapai 55% jarak TP, cairkan 50% lot tunai
-         if(tp > 0.0 && (bits & 1) == 0)
-         {
-            double targetPips = MathAbs(tp - opn) / g_pip;
-            if(targetPips >= 10.0 && profitPips >= targetPips * 0.55)
-            {
-               double cvMid = NormalisasiVolumeBawah(vol * 0.50);
-               if(cvMid >= minLot - 1e-9 && vol - cvMid >= minLot - 1e-9 && ModifikasiDiizinkan())
-               {
-                  if(trade.PositionClosePartial(tk, cvMid))
-                  {
-                     bits |= 1; SimpanGV("SB" + sp, (double)bits);
-                     vol = PositionGetDouble(POSITION_VOLUME);
-                     Print("MIDLINE_CASH_OUT | pos=", pid, " mencairkan 50% profit tunai di +", DoubleToString(profitPips, 1), " pips");
-                  }
-               }
-            }
-         }
-
-         // 2. Asymmetric Breakeven Shield (+2.5 Pips langsung SL+ +0.6 pip) & Smart Trailing Acceleration
+         // Asymmetric Breakeven Shield (+2.5 Pips langsung SL+ +0.6 pip) & Smart Trailing Acceleration
          double trigPips  = (tp > 0.0 ? 2.5 : ScalpMulaiSLPlusPips);
          double kunciPips = (tp > 0.0 ? 0.6 : ScalpKunciAwalPips);
-         double trailDin  = (profitPips >= 12.0 ? 3.5 : ScalpTrailingPips); // Percepat trailing jadi 3.5 pips saat profit besar
+         double trailDin  = (profitPips >= 12.0 ? 3.5 : ScalpTrailingPips);
 
          if(profitPips >= trigPips)
          {
@@ -748,7 +697,7 @@ BAGIAN 7: Cockpit HUD Panel Canggih & Pembersihan Objek (V24_Dashboard, V24_Bers
 
 • Lokasi: Sekitar baris 2165–2245 (V24_Dashboard & V24_BersihkanObjek) dan baris 2415 (OnTick).
 • Cara Mencari: Tekan Ctrl + F, ketik void V24_Dashboard().
-Langkah 7A: Ganti seluruh fungsi V24_Dashboard() dengan versi Kokpit HUD Obsidian Pro (menampilkan Cuaca Pasar, Order Flow Pressure %, House Money Vault, dan 5 Lampu Mesin Dewa) di bawah ini:
+Langkah 7A: Ganti seluruh fungsi V24_Dashboard() dengan versi Kokpit HUD Obsidian Pro di bawah ini:
 cpp
 void V24_Dashboard()
 {
@@ -820,10 +769,4 @@ cpp
    V24_Dashboard();
    TL_GambarChart();
 Gunakan kode dengan hati-hati.
-
-Cara Compile & Menjalankan
-
-1. Setelah ketujuh bagian di atas dipasang di MetaEditor (F4), tekan F7 (Compile).
-2. Pastikan di tab Errors bagian bawah tertulis 0 errors, 0 warnings.
-3. Pasang EA ke chart XAUUSDm (M1) dengan tombol Algo Trading menyala hijau.
-Silakan pasang ketujuh bagian kode final tersebut dan tekan Compile (F7) di MetaEditor. Jika ada pesan error atau peringatan baris tertentu saat compile, salin pesannya ke sini agar langsung saya perbaiki detik itu juga!
+Silakan tempelkan kode di atas secara berurutan ke file .mq5 Anda di MetaEditor, lalu tekan Compile (F7). Jika muncul pesan error atau warning dari compiler, salin pesannya ke sini agar langsung saya perbaiki!
